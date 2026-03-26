@@ -1702,14 +1702,14 @@ build-postgresql:
      You can specify environment variables on the
      <filename>configure</filename> command line, for example:
 <screen>
-<userinput>./configure CC=/opt/bin/gcc CFLAGS='-O2 -pipe'</userinput>
+<userinput>./configure CC=/opt/bin/gcc CFLAGS='-O0 -pipe'</userinput>
 </screen>
      In this usage an environment variable is little different from a
      command-line option.
      You can also set such variables beforehand:
 <screen>
 <userinput>export CC=/opt/bin/gcc</userinput>
-<userinput>export CFLAGS='-O2 -pipe'</userinput>
+<userinput>export CFLAGS='-O0 -pipe'</userinput>
 <userinput>./configure</userinput>
 </screen>
      This usage can be convenient because many programs' configuration
