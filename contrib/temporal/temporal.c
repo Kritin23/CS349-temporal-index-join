@@ -9,8 +9,8 @@
 typedef struct temporalKey {
     int64 id_lower;
     int64 id_upper;
-    int64 time_lower;
-    int64 time_uppper;
+    Timestamp time_lower;
+    Timestamp time_upper;
 } temporalKey;
 
 
@@ -28,12 +28,15 @@ temporal_compress(PG_FUNCTION_ARGS)
         /* replace entry->key with a compressed version */
         temporalKey *key = palloc(sizeof(temporalKey));
 
-        /* fill *compressed_data from entry->key ... */
-        key->id_lower = 
+        // ****** TODO ******
+        // Figure out what do we get in entry, and how to fill 
+        // it in temporalKey.
 
+        /* fill *compressed_data from entry->key ... */
+        
         retval = palloc(sizeof(GISTENTRY));
-        // gistentryinit(*retval, PointerGetDatum(compressed_data),
-                    //   entry->rel, entry->page, entry->offset, false);
+        gistentryinit(*retval, PointerGetDatum(key),
+                      entry->rel, entry->page, entry->offset, false);
     }
     else
     {

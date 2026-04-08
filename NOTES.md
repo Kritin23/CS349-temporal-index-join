@@ -16,6 +16,7 @@
     - `ambuild`
 
 
+
 ## Implementation
 
  - __Planner__:
@@ -52,6 +53,9 @@
  - Test our code 
 
  work in contrib/temporal directory
+
+ **Gist TODOS**
+ - need to make a composite type (id, [start, end]) 
 
 
 ## References
