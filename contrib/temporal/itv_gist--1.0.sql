@@ -31,12 +31,12 @@ CREATE TYPE idx_point_query (
 
 CREATE OPERATOR && (
     LEFTARG = leaf_key_type, RIGHTARG = tsrange,
-    PROCEDURE = itv_consistent_overlap_range, COMMUTATOR = &&
+    PROCEDURE = itv_consistent_overlap_range
 );
 
 CREATE OPERATOR && (
     LEFTARG = leaf_key_type, RIGHTARG = timestamp,
-    PROCEDURE = itv_consistent_overlap_point, COMMUTATOR = &&
+    PROCEDURE = itv_consistent_overlap_point
 );
 
 CREATE OPERATOR && (
@@ -53,12 +53,12 @@ CREATE OPERATOR && (
 
 CREATE OPERATOR <@ (
     LEFTARG = leaf_key_type, RIGHTARG = tsrange,
-    PROCEDURE = itv_consistent_overlap_range, COMMUTATOR = &&
+    PROCEDURE = itv_consistent_overlap_range
 );
 
 CREATE OPERATOR <@ (
     LEFTARG = leaf_key_type, RIGHTARG = timestamp,
-    PROCEDURE = itv_consistent_overlap_point, COMMUTATOR = &&
+    PROCEDURE = itv_consistent_overlap_point
 );
 
 CREATE OPERATOR <@ (
@@ -75,12 +75,12 @@ CREATE OPERATOR <@ (
 
 CREATE OPERATOR @> (
     LEFTARG = leaf_key_type, RIGHTARG = tsrange,
-    PROCEDURE = itv_consistent_overlap_range, COMMUTATOR = &&
+    PROCEDURE = itv_consistent_overlap_range
 );
 
 CREATE OPERATOR @> (
     LEFTARG = leaf_key_type, RIGHTARG = timestamp,
-    PROCEDURE = itv_consistent_overlap_point, COMMUTATOR = &&
+    PROCEDURE = itv_consistent_overlap_point
 );
 
 CREATE OPERATOR @> (

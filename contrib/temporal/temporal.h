@@ -20,4 +20,4 @@
 #define TempIdxRangeContained   12
 
 
-#endif __TEMPORAL
+#endif // __TEMPORAL__
