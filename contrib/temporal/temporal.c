@@ -49,7 +49,11 @@ idx_range_consistent(temporalKey* key, idxQuery* query, StrategyNumber strategy)
 static bool 
 bbox_consistent(temporalKey* key, temporalKey* query, StrategyNumber strategy);
 
-
+#define CHECK_TIME_OVERLAP(key, query) ((key)->time_lower <= (query)->time_upper && (key)->time_upper >= (query)->time_lower)
+#define CHECK_TIME_CONTAINED(key, query) ((key)->time_lower >= (query)->time_lower && (key)->time_upper <= (query)->time_upper)
+#define CHECK_TIME_CONTAINS(key, query) ((key)->time_lower <= (query)->time_lower && (key)->time_upper >= (query)->time_upper)
+#define CHECK_TIME_POINT_CONTAINED(key, query) ((query) >= (key)->time_lower && (query) <= (key)->time_upper)
+#define CHECK_ID_OVERLAP(key, query) ((key)->id_lower <= (query)->id && (key)->id_upper >= (query)->id)
 
 PG_FUNCTION_INFO_V1(temporal_compress);
 PG_FUNCTION_INFO_V1(temporal_consistent);
@@ -146,7 +150,23 @@ temporal_consistent(PG_FUNCTION_ARGS)
 static bool 
 tsrange_consistent(temporalKey* key, tsRange* query, StrategyNumber strategy)
 {
-
+    if (GIST_LEAF(entry))
+    {
+        switch (strategy)
+        {
+            case TempRangeOverlap:
+                return CHECK_TIME_OVERLAP(key, query);
+            case TempRangeContains:
+                return CHECK_TIME_CONTAINS(key, query);
+            case TempRangeContained:
+                return CHECK_TIME_CONTAINED(key, query);
+            default:
+                elog(ERROR, "unrecognized strategy number: %d for tsrange queries", strategy);
+                return false;
+        }
+    }
+    // For non-leaf nodes, we just check if the bounding box overlaps with the query range.
+    return CHECK_TIME_OVERLAP(key, query);
 }
 
 /**
@@ -156,7 +176,16 @@ tsrange_consistent(temporalKey* key, tsRange* query, StrategyNumber strategy)
 static bool 
 ts_consistent(temporalKey* key, Timestamp* query, StrategyNumber strategy)
 {
-
+    switch (strategy)
+    {
+        case TempPointContained:
+            return CHECK_TIME_POINT_CONTAINED(key, *query);
+        
+        default:
+            elog(ERROR, "unrecognized strategy number: %d for single time point", strategy);
+            break;
+    }
+    return false;
 }
 
 /**
@@ -166,7 +195,18 @@ ts_consistent(temporalKey* key, Timestamp* query, StrategyNumber strategy)
 static bool 
 idx_point_consistent(temporalKey* key, idxPointQuery* query, StrategyNumber strategy)
 {
-
+    if (GIST_LEAF(entry))
+    {
+        switch(strategy)
+        {
+            case TempIdxPointContained:
+                return CHECK_TIME_POINT_CONTAINED(key, query) && CHECK_ID_OVERLAP(key, query);
+            default:
+                elog(ERROR, "unrecognized strategy number: %d for idx point queries", strategy);
+                return false;
+        }
+    }
+    return CHECK_TIME_POINT_CONTAINED(key, query) && CHECK_ID_OVERLAP(key, query);
 }
 
 /**
@@ -176,7 +216,21 @@ idx_point_consistent(temporalKey* key, idxPointQuery* query, StrategyNumber stra
 static bool 
 idx_range_consistent(temporalKey* key, idxQuery* query, StrategyNumber strategy)
 {
-
+    if (GIST_LEAF(entry))
+    {
+        switch (strategy)
+        {
+        case TempIdxRangeContained:
+            return CHECK_TIME_CONTAINED(key, query) && CHECK_ID_OVERLAP(key, query);
+        case TempIdxRangeOverlap:
+            return CHECK_TIME_OVERLAP(key, query) && CHECK_ID_OVERLAP(key, query);
+        case TempIdxRangeContains:
+            return CHECK_TIME_CONTAINS(key, query) && CHECK_ID_OVERLAP(key, query);
+        default:
+            break;
+        }
+    }
+    return CHECK_TIME_OVERLAP(key, query) && CHECK_ID_OVERLAP(key, query);
 }
 
 /**
@@ -188,7 +242,32 @@ idx_range_consistent(temporalKey* key, idxQuery* query, StrategyNumber strategy)
 static bool 
 bbox_consistent(temporalKey* key, temporalKey* query, StrategyNumber strategy)
 {
-
+    if (GIST_LEAF(entry))
+    {
+        switch (strategy)
+        {
+        case TempRangeOverlap:
+            return CHECK_TIME_OVERLAP(key, query);
+        case TempRangeContains:
+            return CHECK_TIME_CONTAINS(key, query);
+        case TempRangeContained:
+            return CHECK_TIME_CONTAINED(key, query);
+        case TempPointContained:
+            return CHECK_TIME_POINT_CONTAINED(key, query);
+        case TempIdxRangeContained:
+            return CHECK_TIME_CONTAINED(key, query) && CHECK_ID_OVERLAP(key, query);
+        case TempIdxRangeOverlap:
+            return CHECK_TIME_OVERLAP(key, query) && CHECK_ID_OVERLAP(key, query);
+        case TempIdxRangeContains:
+            return CHECK_TIME_CONTAINS(key, query) && CHECK_ID_OVERLAP(key, query);
+        case TempIdxPointContained:
+            return CHECK_TIME_POINT_CONTAINED(key, query) && CHECK_ID_OVERLAP(key, query);
+        default:
+            elog(ERROR, "unrecognized strategy number: %d for bbox queries", strategy);
+            return false;
+        }
+    }
+    return CHECK_TIME_OVERLAP(key, query) && CHECK_ID_OVERLAP(key, query);
 }
 
 
