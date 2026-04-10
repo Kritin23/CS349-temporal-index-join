@@ -35,10 +35,10 @@ CREATE TYPE idx_point_query (
     alignment = double
 );
 
-CREAT 
+-- CREAT 
 
 CREATE OPERATOR && (
-    LEFTARG = leaf_key_type, RIGHTARG = tsrange,
+    LEFTARG = leaf_key_type, RIGHTARG = time_itv_query,
     PROCEDURE = itv_consistent_overlap_range
 );
 
@@ -60,7 +60,7 @@ CREATE OPERATOR && (
 
 
 CREATE OPERATOR <@ (
-    LEFTARG = leaf_key_type, RIGHTARG = tsrange,
+    LEFTARG = leaf_key_type, RIGHTARG = time_itv_query,
     PROCEDURE = itv_consistent_overlap_range
 );
 
@@ -82,7 +82,7 @@ CREATE OPERATOR <@ (
 
 
 CREATE OPERATOR @> (
-    LEFTARG = leaf_key_type, RIGHTARG = tsrange,
+    LEFTARG = leaf_key_type, RIGHTARG = time_itv_query,
     PROCEDURE = itv_consistent_overlap_range
 );
 
@@ -105,19 +105,19 @@ CREATE OPERATOR @> (
 
 
 CREATE OPERATOR CLASS temporal_ops
-    DEFAULT FOR TYPE temporal_key_type USING gist AS
+    DEFAULT FOR TYPE leaf_key_type USING gist AS
 
-        OPERATOR 1  && (leaf_key_type, tsrange),
+        OPERATOR 1  && (leaf_key_type, time_itv_query),
         OPERATOR 2  && (leaf_key_type, timestamp),
         OPERATOR 3  && (leaf_key_type, idx_point_query), 
         OPERATOR 4  && (leaf_key_type, idx_range_query), 
 
-        OPERATOR 5  @> (leaf_key_type, tsrange),
+        OPERATOR 5  @> (leaf_key_type, time_itv_query),
         OPERATOR 6  @> (leaf_key_type, timestamp),
         OPERATOR 7  @> (leaf_key_type, idx_point_query),
         OPERATOR 8  @> (leaf_key_type, idx_range_query),
 
-        OPERATOR 9  <@ (leaf_key_type, tsrange),
+        OPERATOR 9  <@ (leaf_key_type, time_itv_query),
         OPERATOR 10 <@ (leaf_key_type, timestamp),
         OPERATOR 11 <@ (leaf_key_type, idx_point_query),
         OPERATOR 12 <@ (leaf_key_type, idx_range_query),

@@ -139,28 +139,28 @@ temporal_consistent(PG_FUNCTION_ARGS)
     case TempRangeOverlap:
     case TempRangeContained:
     case TempRangeContains:
-        tsrange_consistent(entry, key, (timeItv*)DatumGetPointer(query), strategy);
+        retval = tsrange_consistent(entry, key, (timeItv*)DatumGetPointer(query), strategy);
         break;
 
     case TempIdxRangeContained:
-    case TempIdxRangeContains:
-    case TempIdxRangeOverlap:
+    // case TempIdxRangeContains:
+    // case TempIdxRangeOverlap:
         idxQuery* query_range = (idxQuery*) DatumGetPointer(query);
-        idx_range_consistent(entry, key, query_range, strategy);
+        retval = idx_range_consistent(entry, key, query_range, strategy);
         break;
 
     case TempPointContained:
     case TempPointContains:
     case TempPointOverlap:
         Timestamp time = DatumGetTimestamp(query);
-        ts_consistent(entry, key, &time, strategy);
+        retval = ts_consistent(entry, key, &time, strategy);
         break;
     
     case TempIdxPointContained:
-    case TempIdxPointContains:
-    case TempIdxPointOverlap:
+    // case TempIdxPointContains:
+    // case TempIdxPointOverlap:
         idxPointQuery* query_point = (idxPointQuery*) DatumGetPointer(query);
-        idx_point_consistent(entry, key, query_point, strategy);
+        retval = idx_point_consistent(entry, key, query_point, strategy);
         break;
 
         
@@ -342,33 +342,34 @@ temporal_union(PG_FUNCTION_ARGS)
     GistEntryVector *entryvec = (GistEntryVector *) PG_GETARG_POINTER(0);
     GISTENTRY  *ent = entryvec->vector;
     temporalKey     *out,
-                    *tmp,
-                    *old;
+                    *tmp;
     int         numranges,
                 i = 0;
 
+    int *size = (int*) PG_GETARG_POINTER(1);
+
     numranges = entryvec->n;
     tmp = (temporalKey*) DatumGetPointer(ent[0].key);
-    out = tmp;
+    out = (temporalKey*) palloc(sizeof(temporalKey));
+    memcpy(out, tmp, sizeof(temporalKey));
+    // out = tmp;
 
     if (numranges == 1)
     {
-        out = (temporalKey*) palloc(sizeof(temporalKey));
-        memcpy(out, tmp, sizeof(temporalKey));
         PG_RETURN_POINTER(out);
     }
 
     for (i = 1; i < numranges; i++)
     {
-        old = out;
         tmp = (temporalKey*) DatumGetPointer(ent[i].key);
 
-        out = (temporalKey*) palloc(sizeof(temporalKey));
     
-        entry_union(old, tmp, out);
+        entry_union(out, tmp, out);
 
         // out = my_union_implementation(out, tmp);
     }
+
+    *size = sizeof(temporalKey);
 
     PG_RETURN_POINTER(out);
 }
@@ -396,7 +397,7 @@ temporal_picksplit(PG_FUNCTION_ARGS)
     GistEntryVector *entryvec = (GistEntryVector *) PG_GETARG_POINTER(0);
     GIST_SPLITVEC *v = (GIST_SPLITVEC *) PG_GETARG_POINTER(1);
     OffsetNumber maxoff = entryvec->n - 1;
-    GISTENTRY  *ent = entryvec->vector;
+    // GISTENTRY  *ent = entryvec->vector;
     int         i,
                 nbytes;
     OffsetNumber *left,
@@ -441,7 +442,11 @@ temporal_picksplit(PG_FUNCTION_ARGS)
         if (i < maxoff/2)
         {
             if (unionL == NULL)
-                unionL = tmp_union;
+            {
+                unionL = (temporalKey*) palloc(sizeof(temporalKey));
+                // unionL = tmp_union
+                memcpy(unionL, tmp_union, sizeof(temporalKey));
+            }
             else
                 entry_union(unionL, tmp_union, unionL);
 
@@ -455,7 +460,11 @@ temporal_picksplit(PG_FUNCTION_ARGS)
              * Same on the right
              */
             if (unionR == NULL)
-                unionR = tmp_union;
+            {
+                unionR = (temporalKey*) palloc(sizeof(temporalKey));
+                // unionL = tmp_union
+                memcpy(unionR, tmp_union, sizeof(temporalKey));
+            }
             else
                 entry_union(unionR, tmp_union, unionR);
 
@@ -465,7 +474,7 @@ temporal_picksplit(PG_FUNCTION_ARGS)
         }
     }
 
-    v->spl_ldatum = (temporalKey*)DatumGetPointer(unionL);
-    v->spl_rdatum = (temporalKey*)DatumGetPointer(unionR);
+    v->spl_ldatum = PointerGetDatum(unionL);
+    v->spl_rdatum = PointerGetDatum(unionR);
     PG_RETURN_POINTER(v);
 }
