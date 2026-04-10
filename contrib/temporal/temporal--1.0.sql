@@ -16,12 +16,12 @@ CREATE TYPE leaf_key_type (
 
 CREATE TYPE idx_range_query (
     internallength = 24,
-    input = idx_range_in,   -- You'll need to write these input/output functions
+    input = idx_range_in,  
     output = idx_range_out,
     alignment = double
 );
 
--- idxPointQuery: int32 (4) + padding (4) + Timestamp (8) = 16 bytes
+
 CREATE TYPE idx_point_query (
     internallength = 16,
     input = idx_point_in,
@@ -98,22 +98,22 @@ CREATE OPERATOR @> (
 
 CREATE OPERATOR CLASS temporal_ops
     DEFAULT FOR TYPE temporal_key_type USING gist AS
-        -- Overlap
+    
         OPERATOR 1  && (leaf_key_type, tsrange),
         OPERATOR 2  && (leaf_key_type, timestamp),
         OPERATOR 3  && (leaf_key_type, idx_point_query), 
         OPERATOR 4  && (leaf_key_type, idx_range_query), 
-        -- Contains
+
         OPERATOR 5  @> (leaf_key_type, tsrange),
         OPERATOR 6  @> (leaf_key_type, timestamp),
         OPERATOR 7  @> (leaf_key_type, idx_point_query),
         OPERATOR 8  @> (leaf_key_type, idx_range_query),
-        -- Contained By
+
         OPERATOR 9  <@ (leaf_key_type, tsrange),
         OPERATOR 10 <@ (leaf_key_type, timestamp),
         OPERATOR 11 <@ (leaf_key_type, idx_point_query),
         OPERATOR 12 <@ (leaf_key_type, idx_range_query),
-        -- Functions
+
         FUNCTION 1  temporal_consistent (internal, internal, smallint, oid, internal),
         FUNCTION 2  temporal_union (internal, internal),
         FUNCTION 3  temporal_compress (internal),
