@@ -21,6 +21,12 @@ CREATE TYPE idx_range_query (
     alignment = double
 );
 
+CREATE TYPE time_itv_query (
+    internallength = 16,
+    input = time_itv_in,
+    output = time_itv_out,
+    alignment = double
+);
 
 CREATE TYPE idx_point_query (
     internallength = 16,
@@ -28,6 +34,8 @@ CREATE TYPE idx_point_query (
     output = idx_point_out,
     alignment = double
 );
+
+CREAT 
 
 CREATE OPERATOR && (
     LEFTARG = leaf_key_type, RIGHTARG = tsrange,
@@ -98,7 +106,7 @@ CREATE OPERATOR @> (
 
 CREATE OPERATOR CLASS temporal_ops
     DEFAULT FOR TYPE temporal_key_type USING gist AS
-    
+
         OPERATOR 1  && (leaf_key_type, tsrange),
         OPERATOR 2  && (leaf_key_type, timestamp),
         OPERATOR 3  && (leaf_key_type, idx_point_query), 
