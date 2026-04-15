@@ -63,3 +63,28 @@
    
 
 
+Next steps:
+
+   This is the interface specified in the SQL standard. Let's go with this as our interface too.
+   Reference: https://en.wikipedia.org/wiki/SQL:2011
+
+   1. Time period definitions use two standard table columns as the start and end of a named time period, with closed      set-open set semantics. This provides compatibility with existing data models, application code, and tools
+   
+   2. Definition of application time period tables (elsewhere called valid time tables), using the PERIOD FOR annotation
+   
+   3. Update and deletion of application time rows with automatic time period splitting
+   Temporal primary keys incorporating application time periods with optional non-overlapping constraints via the WITHOUT OVERLAPS clause
+   
+   4. Application time tables are queried using regular query syntax or using new temporal predicates for time periods including CONTAINS, OVERLAPS, EQUALS, PRECEDES, SUCCEEDS, IMMEDIATELY PRECEDES and IMMEDIATELY SUCCEEDS (which are modified versions of Allen’s interval relations)
+
+   5. Optional : Temporal referential integrity constraints for application time tables
+   
+
+Changes to be done:
+   a. Change the grammar to allow for these keywords inside the CREATE TABLE and selection queries.
+   b. Integrate these changes into the query rewriter.
+   c. Integrate these changes inside the planner to include temporal indexing in its plan.
+   d. Need to change the (CREATE INDEX USING gist...) command to (CREATE TEMPORAL INDEX ON period) for our usecase.
+
+Good news:
+   Since all I could find were extensions to postgres, and since extensions cannot mess up the grammar of postgres, possibly this has no existing implementation in postgres. 
