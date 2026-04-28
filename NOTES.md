@@ -186,6 +186,26 @@ WHERE emp_id = 1;
 
 CREATE TEMPORAL INDEX ON employee_salary(valid_time)
 
-
 Good news:
    Since all I could find were extensions to postgres, and since extensions cannot mess up the grammar of postgres, possibly this has no existing implementation in postgres. 
+
+
+// valid_time tstzrange GENERATED ALWAYS AS (tstzrange(start_date, end_date)) STORED
+// Create another column of datatype tsrange. Use this column, as well as the other two columns. Depending on which column is used, appropriate index will be used.
+
+Parser changes:
+   1. Need to add period for, and add another column with type tsrange.
+   2. Add operators like contains, overlaps, precedes, etc.
+   3. An index is automatically created for each period, but an aggregate based index is not created for each period.
+      Update the create index command to handle aggregate based indexing on a particular atttribute over a period.
+
+
+Semantic analyser/Rewriter:
+   1. Check whether contains and others contain only a period in their lhs.
+   2. Check whether aggregate based indexing is being created on a period attribute only. If yes, then create it.
+
+Planner:
+   1. If a period is present in the group by clause, and aggregate column has an aggregate index on the period, we will use temporal index to get the aggregate.
+   2. If a join is on a period, we need to do a temporal join.
+
+https://chatgpt.com/share/69f09ca6-9998-83e8-8086-8281452dc008
