@@ -182,6 +182,10 @@ FOR PORTION OF valid_time
 FROM DATE '2023-06-01' TO DATE '2023-09-01'
 WHERE emp_id = 1;
 
+// Create Temporal Index
+
+CREATE TEMPORAL INDEX ON employee_salary(valid_time)
+
 
 Good news:
    Since all I could find were extensions to postgres, and since extensions cannot mess up the grammar of postgres, possibly this has no existing implementation in postgres. 
