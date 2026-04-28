@@ -69,7 +69,16 @@ Next steps:
    Reference: https://en.wikipedia.org/wiki/SQL:2011
 
    1. Time period definitions use two standard table columns as the start and end of a named time period, with closed      set-open set semantics. This provides compatibility with existing data models, application code, and tools
-   
+
+      CREATE TABLE employee_salary (
+         emp_id INT,
+         salary NUMERIC,
+         valid_start DATE,
+         valid_end DATE,
+         PERIOD FOR valid_time (valid_start, valid_end),
+         PRIMARY KEY (emp_id, valid_time WITHOUT OVERLAPS)
+      );
+
    2. Definition of application time period tables (elsewhere called valid time tables), using the PERIOD FOR annotation
    
    3. Update and deletion of application time rows with automatic time period splitting
@@ -85,6 +94,94 @@ Changes to be done:
    b. Integrate these changes into the query rewriter.
    c. Integrate these changes inside the planner to include temporal indexing in its plan.
    d. Need to change the (CREATE INDEX USING gist...) command to (CREATE TEMPORAL INDEX ON period) for our usecase.
+
+Sample Queries:
+
+// Create Temporal attribute
+
+CREATE TABLE employee_salary (
+    emp_id INT,
+    salary NUMERIC,
+    valid_start DATE,
+    valid_end DATE,
+    PERIOD FOR valid_time (valid_start, valid_end),
+    PRIMARY KEY (emp_id, valid_time WITHOUT OVERLAPS)
+);
+
+INSERT INTO employee_salary
+VALUES (1, 50000, DATE '2023-01-01', DATE '2023-06-01');
+
+// Foreign key
+
+CREATE TABLE project_assignment (
+    emp_id INT,
+    project_id INT,
+    start_date DATE,
+    end_date DATE,
+    PERIOD FOR assignment_time (start_date, end_date),
+    FOREIGN KEY (emp_id, assignment_time)
+        REFERENCES employee_salary (emp_id, valid_time)
+);
+
+// Predicates
+
+SELECT *
+FROM employee_salary
+WHERE valid_time CONTAINS DATE '2023-03-01';
+
+SELECT *
+FROM employee_salary
+WHERE valid_time OVERLAPS PERIOD (
+    DATE '2023-05-01',
+    DATE '2023-08-01'
+);
+
+SELECT *
+FROM employee_salary
+WHERE valid_time EQUALS PERIOD (
+    DATE '2023-01-01',
+    DATE '2023-06-01'
+);
+
+SELECT *
+FROM employee_salary
+WHERE valid_time PRECEDES PERIOD (
+    DATE '2023-06-01',
+    DATE '2023-12-01'
+);
+
+SELECT *
+FROM employee_salary
+WHERE valid_time SUCCEEDS PERIOD (
+    DATE '2022-01-01',
+    DATE '2023-01-01'
+);
+
+SELECT e1.*
+FROM employee_salary e1
+JOIN employee_salary e2
+ON e1.valid_time IMMEDIATELY PRECEDES e2.valid_time
+AND e1.emp_id = e2.emp_id;
+
+SELECT e1.*
+FROM employee_salary e1
+JOIN employee_salary e2
+ON e1.valid_time IMMEDIATELY SUCCEEDS e2.valid_time
+AND e1.emp_id = e2.emp_id;
+
+// Updates
+
+UPDATE employee_salary
+SET salary = 70000
+FOR PORTION OF valid_time
+FROM DATE '2023-06-01' TO DATE '2023-09-01'
+WHERE emp_id = 1;
+
+DELETE FROM employee_salary
+FOR PORTION OF valid_time
+FROM DATE '2023-06-01' TO DATE '2023-09-01'
+WHERE emp_id = 1;
+
 
 Good news:
    Since all I could find were extensions to postgres, and since extensions cannot mess up the grammar of postgres, possibly this has no existing implementation in postgres. 
