@@ -44,7 +44,8 @@ lib*.pc
 /tmp_install/
 /portlock/
 install/
+data/
 
 .vscode/
 logfile
-.gdbinit
+.gdbinitdata/

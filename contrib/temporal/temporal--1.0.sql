@@ -1,10 +1,42 @@
+-- ===============================
+-- temporal_key_type
+-- ===============================
+
+CREATE TYPE temporal_key_type;
+
+CREATE FUNCTION temporal_in(cstring)
+RETURNS temporal_key_type
+AS 'MODULE_PATHNAME', 'temporal_in'
+LANGUAGE C IMMUTABLE STRICT;
+
+CREATE FUNCTION temporal_out(temporal_key_type)
+RETURNS cstring
+AS 'MODULE_PATHNAME', 'temporal_out'
+LANGUAGE C IMMUTABLE STRICT;
+
 CREATE TYPE temporal_key_type (
     internallength = 24,
     input = temporal_in,
     output = temporal_out,
-    alignment = double, 
+    alignment = double,
     storage = plain
 );
+
+-- ===============================
+-- leaf_key_type
+-- ===============================
+
+CREATE TYPE leaf_key_type;
+
+CREATE FUNCTION leaf_in(cstring)
+RETURNS leaf_key_type
+AS 'MODULE_PATHNAME', 'leaf_in'
+LANGUAGE C IMMUTABLE STRICT;
+
+CREATE FUNCTION leaf_out(leaf_key_type)
+RETURNS cstring
+AS 'MODULE_PATHNAME', 'leaf_out'
+LANGUAGE C IMMUTABLE STRICT;
 
 CREATE TYPE leaf_key_type (
     internallength = 24,
@@ -14,12 +46,21 @@ CREATE TYPE leaf_key_type (
     storage = plain
 );
 
-CREATE TYPE idx_range_query (
-    internallength = 24,
-    input = idx_range_in,  
-    output = idx_range_out,
-    alignment = double
-);
+-- ===============================
+-- time_itv_query
+-- ===============================
+
+CREATE TYPE time_itv_query;
+
+CREATE FUNCTION time_itv_in(cstring)
+RETURNS time_itv_query
+AS 'MODULE_PATHNAME', 'time_itv_in'
+LANGUAGE C IMMUTABLE STRICT;
+
+CREATE FUNCTION time_itv_out(time_itv_query)
+RETURNS cstring
+AS 'MODULE_PATHNAME', 'time_itv_out'
+LANGUAGE C IMMUTABLE STRICT;
 
 CREATE TYPE time_itv_query (
     internallength = 16,
@@ -28,6 +69,22 @@ CREATE TYPE time_itv_query (
     alignment = double
 );
 
+-- ===============================
+-- idx_point_query
+-- ===============================
+
+CREATE TYPE idx_point_query;
+
+CREATE FUNCTION idx_point_in(cstring)
+RETURNS idx_point_query
+AS 'MODULE_PATHNAME', 'idx_point_in'
+LANGUAGE C IMMUTABLE STRICT;
+
+CREATE FUNCTION idx_point_out(idx_point_query)
+RETURNS cstring
+AS 'MODULE_PATHNAME', 'idx_point_out'
+LANGUAGE C IMMUTABLE STRICT;
+
 CREATE TYPE idx_point_query (
     internallength = 16,
     input = idx_point_in,
@@ -35,74 +92,123 @@ CREATE TYPE idx_point_query (
     alignment = double
 );
 
--- CREAT 
+-- ===============================
+-- idx_range_query
+-- ===============================
 
-CREATE OPERATOR && (
-    LEFTARG = leaf_key_type, RIGHTARG = time_itv_query,
-    PROCEDURE = itv_consistent_overlap_range
+CREATE TYPE idx_range_query;
+
+CREATE FUNCTION idx_range_in(cstring)
+RETURNS idx_range_query
+AS 'MODULE_PATHNAME', 'idx_range_in'
+LANGUAGE C IMMUTABLE STRICT;
+
+CREATE FUNCTION idx_range_out(idx_range_query)
+RETURNS cstring
+AS 'MODULE_PATHNAME', 'idx_range_out'
+LANGUAGE C IMMUTABLE STRICT;
+
+CREATE TYPE idx_range_query (
+    internallength = 24,
+    input = idx_range_in,
+    output = idx_range_out,
+    alignment = double
 );
 
-CREATE OPERATOR && (
-    LEFTARG = leaf_key_type, RIGHTARG = timestamp,
-    PROCEDURE = itv_consistent_overlap_point
-);
+-- ===============================
+-- Constructor functions
+-- ===============================
 
-CREATE OPERATOR && (
-    LEFTARG = leaf_key_type, RIGHTARG = idx_range_query,
-    PROCEDURE = itv_range_overlap_bool
-);
+CREATE FUNCTION temporal_key(int, timestamp, timestamp)
+RETURNS leaf_key_type
+AS 'MODULE_PATHNAME', 'temporal_key'
+LANGUAGE C IMMUTABLE STRICT;
 
-CREATE OPERATOR && (
-    LEFTARG = leaf_key_type, RIGHTARG = idx_point_query,
-    PROCEDURE = itv_point_overlap_bool
-);
+CREATE FUNCTION temporal_point(int, timestamp)
+RETURNS idx_point_query
+AS 'MODULE_PATHNAME', 'temporal_point'
+LANGUAGE C IMMUTABLE STRICT;
 
+CREATE FUNCTION temporal_range(int, timestamp, timestamp)
+RETURNS idx_range_query
+AS 'MODULE_PATHNAME', 'temporal_range'
+LANGUAGE C IMMUTABLE STRICT;
 
+CREATE FUNCTION temporal_time_range(timestamp, timestamp)
+RETURNS time_itv_query
+AS 'MODULE_PATHNAME', 'temporal_time_range'
+LANGUAGE C IMMUTABLE STRICT;
 
-CREATE OPERATOR <@ (
-    LEFTARG = leaf_key_type, RIGHTARG = time_itv_query,
-    PROCEDURE = itv_consistent_overlap_range
-);
+-- ===============================
+-- OPERATOR EXECUTION FUNCTIONS (NEW)
+-- ===============================
 
-CREATE OPERATOR <@ (
-    LEFTARG = leaf_key_type, RIGHTARG = timestamp,
-    PROCEDURE = itv_consistent_overlap_point
-);
+-- OVERLAP (&&)
+CREATE FUNCTION temporal_overlap_time_itv(leaf_key_type, time_itv_query) RETURNS boolean AS 'MODULE_PATHNAME', 'temporal_overlap_time_itv' LANGUAGE C IMMUTABLE STRICT;
+CREATE FUNCTION temporal_overlap_timestamp(leaf_key_type, timestamp) RETURNS boolean AS 'MODULE_PATHNAME', 'temporal_overlap_timestamp' LANGUAGE C IMMUTABLE STRICT;
+CREATE FUNCTION temporal_overlap_idx_point(leaf_key_type, idx_point_query) RETURNS boolean AS 'MODULE_PATHNAME', 'temporal_overlap_idx_point' LANGUAGE C IMMUTABLE STRICT;
+CREATE FUNCTION temporal_overlap_idx_range(leaf_key_type, idx_range_query) RETURNS boolean AS 'MODULE_PATHNAME', 'temporal_overlap_idx_range' LANGUAGE C IMMUTABLE STRICT;
 
-CREATE OPERATOR <@ (
-    LEFTARG = leaf_key_type, RIGHTARG = idx_range_query,
-    PROCEDURE = itv_range_overlap_bool
-);
+-- CONTAINS (@>)
+CREATE FUNCTION temporal_contains_time_itv(leaf_key_type, time_itv_query) RETURNS boolean AS 'MODULE_PATHNAME', 'temporal_contains_time_itv' LANGUAGE C IMMUTABLE STRICT;
+CREATE FUNCTION temporal_contains_timestamp(leaf_key_type, timestamp) RETURNS boolean AS 'MODULE_PATHNAME', 'temporal_contains_timestamp' LANGUAGE C IMMUTABLE STRICT;
+CREATE FUNCTION temporal_contains_idx_point(leaf_key_type, idx_point_query) RETURNS boolean AS 'MODULE_PATHNAME', 'temporal_contains_idx_point' LANGUAGE C IMMUTABLE STRICT;
+CREATE FUNCTION temporal_contains_idx_range(leaf_key_type, idx_range_query) RETURNS boolean AS 'MODULE_PATHNAME', 'temporal_contains_idx_range' LANGUAGE C IMMUTABLE STRICT;
 
-CREATE OPERATOR <@ (
-    LEFTARG = leaf_key_type, RIGHTARG = idx_point_query,
-    PROCEDURE = itv_point_overlap_bool
-);
-
-
-
-CREATE OPERATOR @> (
-    LEFTARG = leaf_key_type, RIGHTARG = time_itv_query,
-    PROCEDURE = itv_consistent_overlap_range
-);
-
-CREATE OPERATOR @> (
-    LEFTARG = leaf_key_type, RIGHTARG = timestamp,
-    PROCEDURE = itv_consistent_overlap_point
-);
-
-CREATE OPERATOR @> (
-    LEFTARG = leaf_key_type, RIGHTARG = idx_range_query,
-    PROCEDURE = itv_range_overlap_bool
-);
-
-CREATE OPERATOR @> (
-    LEFTARG = leaf_key_type, RIGHTARG = idx_point_query,
-    PROCEDURE = itv_point_overlap_bool
-);
+-- CONTAINED BY (<@)
+CREATE FUNCTION temporal_contained_time_itv(leaf_key_type, time_itv_query) RETURNS boolean AS 'MODULE_PATHNAME', 'temporal_contained_time_itv' LANGUAGE C IMMUTABLE STRICT;
+CREATE FUNCTION temporal_contained_timestamp(leaf_key_type, timestamp) RETURNS boolean AS 'MODULE_PATHNAME', 'temporal_contained_timestamp' LANGUAGE C IMMUTABLE STRICT;
+CREATE FUNCTION temporal_contained_idx_point(leaf_key_type, idx_point_query) RETURNS boolean AS 'MODULE_PATHNAME', 'temporal_contained_idx_point' LANGUAGE C IMMUTABLE STRICT;
+CREATE FUNCTION temporal_contained_idx_range(leaf_key_type, idx_range_query) RETURNS boolean AS 'MODULE_PATHNAME', 'temporal_contained_idx_range' LANGUAGE C IMMUTABLE STRICT;
 
 
+-- ===============================
+-- GiST SUPPORT FUNCTIONS
+-- ===============================
 
+CREATE FUNCTION temporal_consistent(internal, internal, smallint, oid, internal)
+RETURNS boolean AS 'MODULE_PATHNAME', 'temporal_consistent' LANGUAGE C IMMUTABLE STRICT;
+
+CREATE FUNCTION temporal_union(internal, internal)
+RETURNS internal AS 'MODULE_PATHNAME', 'temporal_union' LANGUAGE C IMMUTABLE STRICT;
+
+CREATE FUNCTION temporal_compress(internal)
+RETURNS internal AS 'MODULE_PATHNAME', 'temporal_compress' LANGUAGE C IMMUTABLE STRICT;
+
+CREATE FUNCTION temporal_decompress(internal)
+RETURNS internal AS 'MODULE_PATHNAME', 'temporal_decompress' LANGUAGE C IMMUTABLE STRICT;
+
+CREATE FUNCTION temporal_penalty(internal, internal, internal)
+RETURNS internal AS 'MODULE_PATHNAME', 'temporal_penalty' LANGUAGE C IMMUTABLE STRICT;
+
+CREATE FUNCTION temporal_picksplit(internal, internal)
+RETURNS internal AS 'MODULE_PATHNAME', 'temporal_picksplit' LANGUAGE C IMMUTABLE STRICT;
+
+CREATE FUNCTION temporal_same(internal, internal, internal)
+RETURNS internal AS 'MODULE_PATHNAME', 'temporal_same' LANGUAGE C IMMUTABLE STRICT;
+
+-- ===============================
+-- OPERATORS (Mapped to specific functions)
+-- ===============================
+
+CREATE OPERATOR && (LEFTARG = leaf_key_type, RIGHTARG = time_itv_query, PROCEDURE = temporal_overlap_time_itv);
+CREATE OPERATOR && (LEFTARG = leaf_key_type, RIGHTARG = timestamp, PROCEDURE = temporal_overlap_timestamp);
+CREATE OPERATOR && (LEFTARG = leaf_key_type, RIGHTARG = idx_point_query, PROCEDURE = temporal_overlap_idx_point);
+CREATE OPERATOR && (LEFTARG = leaf_key_type, RIGHTARG = idx_range_query, PROCEDURE = temporal_overlap_idx_range);
+
+CREATE OPERATOR @> (LEFTARG = leaf_key_type, RIGHTARG = time_itv_query, PROCEDURE = temporal_contains_time_itv);
+CREATE OPERATOR @> (LEFTARG = leaf_key_type, RIGHTARG = timestamp, PROCEDURE = temporal_contains_timestamp);
+CREATE OPERATOR @> (LEFTARG = leaf_key_type, RIGHTARG = idx_point_query, PROCEDURE = temporal_contains_idx_point);
+CREATE OPERATOR @> (LEFTARG = leaf_key_type, RIGHTARG = idx_range_query, PROCEDURE = temporal_contains_idx_range);
+
+CREATE OPERATOR <@ (LEFTARG = leaf_key_type, RIGHTARG = time_itv_query, PROCEDURE = temporal_contained_time_itv);
+CREATE OPERATOR <@ (LEFTARG = leaf_key_type, RIGHTARG = timestamp, PROCEDURE = temporal_contained_timestamp);
+CREATE OPERATOR <@ (LEFTARG = leaf_key_type, RIGHTARG = idx_point_query, PROCEDURE = temporal_contained_idx_point);
+CREATE OPERATOR <@ (LEFTARG = leaf_key_type, RIGHTARG = idx_range_query, PROCEDURE = temporal_contained_idx_range);
+
+-- ===============================
+-- OPERATOR CLASS
+-- ===============================
 
 CREATE OPERATOR CLASS temporal_ops
     DEFAULT FOR TYPE leaf_key_type USING gist AS

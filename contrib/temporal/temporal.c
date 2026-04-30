@@ -3,12 +3,16 @@
  */
 
 #include "postgres.h"
+#include "fmgr.h"       /* Required for PG_MODULE_MAGIC */
 #include "temporal.h"
 #include "access/gist.h"
 #include "access/stratnum.h"
 #include "utils/float.h"
 #include "utils/fmgrprotos.h"
 #include "utils/timestamp.h"
+
+/* Magic block to ensure compatibility with PostgreSQL */
+PG_MODULE_MAGIC;
 
 typedef struct temporalKey {
     int32 id_lower;
@@ -39,16 +43,276 @@ typedef struct idxQuery {
                 end;
 } idxQuery;
 
-static bool 
-tsrange_consistent(GISTENTRY* entry, temporalKey* key, timeItv* query, StrategyNumber strategy);
-static bool 
-ts_consistent(GISTENTRY* entry, temporalKey* key, Timestamp* query, StrategyNumber strategy);
-static bool 
-idx_point_consistent(GISTENTRY* entry, temporalKey* key, idxPointQuery* query, StrategyNumber strategy);
-static bool 
-idx_range_consistent(GISTENTRY* entry, temporalKey* key, idxQuery* query, StrategyNumber strategy);
-// static bool 
-// bbox_consistent(temporalKey* key, temporalKey* query, StrategyNumber strategy);
+
+/* ===== Constructors (clean SQL interface) ===== */
+
+PG_FUNCTION_INFO_V1(temporal_key);
+Datum
+temporal_key(PG_FUNCTION_ARGS)
+{
+    int32 id = PG_GETARG_INT32(0);
+    Timestamp start = PG_GETARG_TIMESTAMP(1);
+    Timestamp end = PG_GETARG_TIMESTAMP(2);
+
+    leafKey *key = (leafKey *) palloc(sizeof(leafKey));
+    key->id = id;
+    key->start = start;
+    key->end = end;
+
+    PG_RETURN_POINTER(key);
+}
+
+PG_FUNCTION_INFO_V1(temporal_point);
+Datum
+temporal_point(PG_FUNCTION_ARGS)
+{
+    int32 id = PG_GETARG_INT32(0);
+    Timestamp t = PG_GETARG_TIMESTAMP(1);
+
+    idxPointQuery *q = (idxPointQuery *) palloc(sizeof(idxPointQuery));
+    q->id = id;
+    q->time = t;
+
+    PG_RETURN_POINTER(q);
+}
+
+PG_FUNCTION_INFO_V1(temporal_range);
+Datum
+temporal_range(PG_FUNCTION_ARGS)
+{
+    int32 id = PG_GETARG_INT32(0);
+    Timestamp start = PG_GETARG_TIMESTAMP(1);
+    Timestamp end = PG_GETARG_TIMESTAMP(2);
+
+    idxQuery *q = (idxQuery *) palloc(sizeof(idxQuery));
+    q->id = id;
+    q->start = start;
+    q->end = end;
+
+    PG_RETURN_POINTER(q);
+}
+
+PG_FUNCTION_INFO_V1(temporal_time_range);
+Datum
+temporal_time_range(PG_FUNCTION_ARGS)
+{
+    Timestamp start = PG_GETARG_TIMESTAMP(0);
+    Timestamp end = PG_GETARG_TIMESTAMP(1);
+
+    timeItv *q = (timeItv *) palloc(sizeof(timeItv));
+    q->start = start;
+    q->end = end;
+
+    PG_RETURN_POINTER(q);
+}
+
+/* ===== Input functions (disable text input, enforce constructors) ===== */
+
+PG_FUNCTION_INFO_V1(temporal_in);
+Datum
+temporal_in(PG_FUNCTION_ARGS)
+{
+    ereport(ERROR,
+        (errmsg("temporal_key_type cannot be constructed from text"),
+         errhint("Use temporal_key(...) instead")));
+    PG_RETURN_NULL(); /* unreachable */
+}
+
+
+PG_FUNCTION_INFO_V1(leaf_in);
+Datum
+leaf_in(PG_FUNCTION_ARGS)
+{
+    ereport(ERROR,
+        (errmsg("leaf_key_type cannot be constructed from text"),
+         errhint("Use temporal_key(id, start_time, end_time) instead")));
+    PG_RETURN_NULL(); /* unreachable */
+}
+
+
+PG_FUNCTION_INFO_V1(time_itv_in);
+Datum
+time_itv_in(PG_FUNCTION_ARGS)
+{
+    ereport(ERROR,
+        (errmsg("time_itv_query cannot be constructed from text"),
+         errhint("Use temporal_time_range(start_time, end_time) instead")));
+    PG_RETURN_NULL(); /* unreachable */
+}
+
+
+PG_FUNCTION_INFO_V1(idx_point_in);
+Datum
+idx_point_in(PG_FUNCTION_ARGS)
+{
+    ereport(ERROR,
+        (errmsg("idx_point_query cannot be constructed from text"),
+         errhint("Use temporal_point(id, timestamp) instead")));
+    PG_RETURN_NULL(); /* unreachable */
+}
+
+
+PG_FUNCTION_INFO_V1(idx_range_in);
+Datum
+idx_range_in(PG_FUNCTION_ARGS)
+{
+    ereport(ERROR,
+        (errmsg("idx_range_query cannot be constructed from text"),
+         errhint("Use temporal_range(id, start_time, end_time) instead")));
+    PG_RETURN_NULL(); /* unreachable */
+}
+
+/* ===== I/O functions for custom types ===== */
+
+PG_FUNCTION_INFO_V1(temporal_out);
+Datum
+temporal_out(PG_FUNCTION_ARGS)
+{
+    temporalKey *key = (temporalKey *) PG_GETARG_POINTER(0);
+    char *result = psprintf("(%d,%d,%ld,%ld)",
+        key->id_lower, key->id_upper, (long) key->time_lower, (long) key->time_upper);
+    PG_RETURN_CSTRING(result);
+}
+
+PG_FUNCTION_INFO_V1(leaf_out);
+Datum
+leaf_out(PG_FUNCTION_ARGS)
+{
+    leafKey *key = (leafKey *) PG_GETARG_POINTER(0);
+    char *result = psprintf("(%d,%ld,%ld)",
+        key->id, (long) key->start, (long) key->end);
+    PG_RETURN_CSTRING(result);
+}
+
+PG_FUNCTION_INFO_V1(time_itv_out);
+Datum
+time_itv_out(PG_FUNCTION_ARGS)
+{
+    timeItv *itv = (timeItv *) PG_GETARG_POINTER(0);
+    char *result = psprintf("(%ld,%ld)",
+        (long) itv->start, (long) itv->end);
+    PG_RETURN_CSTRING(result);
+}
+
+PG_FUNCTION_INFO_V1(idx_point_out);
+Datum
+idx_point_out(PG_FUNCTION_ARGS)
+{
+    idxPointQuery *q = (idxPointQuery *) PG_GETARG_POINTER(0);
+    char *result = psprintf("(%d,%ld)",
+        q->id, (long) q->time);
+    PG_RETURN_CSTRING(result);
+}
+
+PG_FUNCTION_INFO_V1(idx_range_out);
+Datum
+idx_range_out(PG_FUNCTION_ARGS)
+{
+    idxQuery *q = (idxQuery *) PG_GETARG_POINTER(0);
+    char *result = psprintf("(%d,%ld,%ld)",
+        q->id, (long) q->start, (long) q->end);
+    PG_RETURN_CSTRING(result);
+}
+
+/* ========================================================== */
+/* SQL OPERATOR FUNCTIONS (Sequential Scan / Direct SQL)      */
+/* ========================================================== */
+
+/* Overlap (&&) */
+PG_FUNCTION_INFO_V1(temporal_overlap_time_itv);
+Datum temporal_overlap_time_itv(PG_FUNCTION_ARGS) {
+    leafKey *key = (leafKey *) PG_GETARG_POINTER(0);
+    timeItv *query = (timeItv *) PG_GETARG_POINTER(1);
+    PG_RETURN_BOOL(key->start <= query->end && key->end >= query->start);
+}
+
+PG_FUNCTION_INFO_V1(temporal_overlap_timestamp);
+Datum temporal_overlap_timestamp(PG_FUNCTION_ARGS) {
+    leafKey *key = (leafKey *) PG_GETARG_POINTER(0);
+    Timestamp query = PG_GETARG_TIMESTAMP(1);
+    PG_RETURN_BOOL(key->start <= query && key->end >= query);
+}
+
+PG_FUNCTION_INFO_V1(temporal_overlap_idx_point);
+Datum temporal_overlap_idx_point(PG_FUNCTION_ARGS) {
+    leafKey *key = (leafKey *) PG_GETARG_POINTER(0);
+    idxPointQuery *query = (idxPointQuery *) PG_GETARG_POINTER(1);
+    PG_RETURN_BOOL(key->id == query->id && key->start <= query->time && key->end >= query->time);
+}
+
+PG_FUNCTION_INFO_V1(temporal_overlap_idx_range);
+Datum temporal_overlap_idx_range(PG_FUNCTION_ARGS) {
+    leafKey *key = (leafKey *) PG_GETARG_POINTER(0);
+    idxQuery *query = (idxQuery *) PG_GETARG_POINTER(1);
+    PG_RETURN_BOOL(key->id == query->id && key->start <= query->end && key->end >= query->start);
+}
+
+/* Contains (@>) */
+PG_FUNCTION_INFO_V1(temporal_contains_time_itv);
+Datum temporal_contains_time_itv(PG_FUNCTION_ARGS) {
+    leafKey *key = (leafKey *) PG_GETARG_POINTER(0);
+    timeItv *query = (timeItv *) PG_GETARG_POINTER(1);
+    PG_RETURN_BOOL(key->start <= query->start && key->end >= query->end);
+}
+
+PG_FUNCTION_INFO_V1(temporal_contains_timestamp);
+Datum temporal_contains_timestamp(PG_FUNCTION_ARGS) {
+    leafKey *key = (leafKey *) PG_GETARG_POINTER(0);
+    Timestamp query = PG_GETARG_TIMESTAMP(1);
+    PG_RETURN_BOOL(key->start <= query && key->end >= query);
+}
+
+PG_FUNCTION_INFO_V1(temporal_contains_idx_point);
+Datum temporal_contains_idx_point(PG_FUNCTION_ARGS) {
+    leafKey *key = (leafKey *) PG_GETARG_POINTER(0);
+    idxPointQuery *query = (idxPointQuery *) PG_GETARG_POINTER(1);
+    PG_RETURN_BOOL(key->id == query->id && key->start <= query->time && key->end >= query->time);
+}
+
+PG_FUNCTION_INFO_V1(temporal_contains_idx_range);
+Datum temporal_contains_idx_range(PG_FUNCTION_ARGS) {
+    leafKey *key = (leafKey *) PG_GETARG_POINTER(0);
+    idxQuery *query = (idxQuery *) PG_GETARG_POINTER(1);
+    PG_RETURN_BOOL(key->id == query->id && key->start <= query->start && key->end >= query->end);
+}
+
+/* Contained By (<@) */
+PG_FUNCTION_INFO_V1(temporal_contained_time_itv);
+Datum temporal_contained_time_itv(PG_FUNCTION_ARGS) {
+    leafKey *key = (leafKey *) PG_GETARG_POINTER(0);
+    timeItv *query = (timeItv *) PG_GETARG_POINTER(1);
+    PG_RETURN_BOOL(key->start >= query->start && key->end <= query->end);
+}
+
+PG_FUNCTION_INFO_V1(temporal_contained_timestamp);
+Datum temporal_contained_timestamp(PG_FUNCTION_ARGS) {
+    leafKey *key = (leafKey *) PG_GETARG_POINTER(0);
+    Timestamp query = PG_GETARG_TIMESTAMP(1);
+    PG_RETURN_BOOL(key->start >= query && key->end <= query);
+}
+
+PG_FUNCTION_INFO_V1(temporal_contained_idx_point);
+Datum temporal_contained_idx_point(PG_FUNCTION_ARGS) {
+    leafKey *key = (leafKey *) PG_GETARG_POINTER(0);
+    idxPointQuery *query = (idxPointQuery *) PG_GETARG_POINTER(1);
+    PG_RETURN_BOOL(key->id == query->id && key->start >= query->time && key->end <= query->time);
+}
+
+PG_FUNCTION_INFO_V1(temporal_contained_idx_range);
+Datum temporal_contained_idx_range(PG_FUNCTION_ARGS) {
+    leafKey *key = (leafKey *) PG_GETARG_POINTER(0);
+    idxQuery *query = (idxQuery *) PG_GETARG_POINTER(1);
+    PG_RETURN_BOOL(key->id == query->id && key->start >= query->start && key->end <= query->end);
+}
+
+/* ========================================================== */
+/* GiST SUPPORT FUNCTIONS                                     */
+/* ========================================================== */
+
+static bool tsrange_consistent(GISTENTRY* entry, temporalKey* key, timeItv* query, StrategyNumber strategy);
+static bool ts_consistent(GISTENTRY* entry, temporalKey* key, Timestamp* query, StrategyNumber strategy);
+static bool idx_point_consistent(GISTENTRY* entry, temporalKey* key, idxPointQuery* query, StrategyNumber strategy);
+static bool idx_range_consistent(GISTENTRY* entry, temporalKey* key, idxQuery* query, StrategyNumber strategy);
 
 #define CHECK_TIME_OVERLAP(key, query) ((key)->time_lower <= (query)->end && (key)->time_upper >= (query)->start)
 #define CHECK_TIME_CONTAINED(key, query) ((key)->time_lower >= (query)->start && (key)->time_upper <= (query)->end)
@@ -56,6 +320,7 @@ idx_range_consistent(GISTENTRY* entry, temporalKey* key, idxQuery* query, Strate
 #define CHECK_TIME_POINT_CONTAINED(key, query) ((query) >= (key)->time_lower && (query) <= (key)->time_upper)
 #define CHECK_ID_OVERLAP(key, query) ((key)->id_lower <= (query)->id && (key)->id_upper >= (query)->id)
 
+PG_FUNCTION_INFO_V1(temporal_decompress);
 PG_FUNCTION_INFO_V1(temporal_compress);
 PG_FUNCTION_INFO_V1(temporal_consistent);
 PG_FUNCTION_INFO_V1(temporal_union);
@@ -63,6 +328,11 @@ PG_FUNCTION_INFO_V1(temporal_same);
 PG_FUNCTION_INFO_V1(temporal_penalty);
 PG_FUNCTION_INFO_V1(temporal_picksplit);
 
+Datum
+temporal_decompress(PG_FUNCTION_ARGS)
+{
+    PG_RETURN_POINTER(PG_GETARG_POINTER(0));
+}
 
 Datum
 temporal_compress(PG_FUNCTION_ARGS)
@@ -72,7 +342,6 @@ temporal_compress(PG_FUNCTION_ARGS)
 
     if (entry->leafkey)
     {
-        /* replace entry->key with a compressed version */
         temporalKey *key = palloc(sizeof(temporalKey));
         leafKey *entry_data = (leafKey *)DatumGetPointer(entry->key);
         
@@ -87,101 +356,61 @@ temporal_compress(PG_FUNCTION_ARGS)
     }
     else
     {
-        /* typically we needn't do anything with non-leaf entries */
         retval = entry;
     }
 
     PG_RETURN_POINTER(retval);
 }
 
-/**
- * temporal_consistent()
- * 
- * Need to define valid Strategies for our index
- * Strategies are nothing but the operators we will use in our queries. 
- * We could go with the existing operators/strategies, or define our own as 
- * well. 
- *  See src/include/access/srtatnum.h
- * 
- *  - RTContainsStrategyNumber
- *  - RTContainedByStrategyNumber
- *  - RTOverlapStrategyNumber
- * 
- *  Need to differentiate based on data type as well, or maybe strategy number
- *  can remain same and we can figure out data type some other way.
- *  Anyways, temporal_consistent will call one of xxx_consistent(), which will
- *  ultimately call bbox_consistent(). 
- * 
- *  This seemed intuitive and neat to me, but if you want something else, feel 
- *  free. 
- */
 Datum
 temporal_consistent(PG_FUNCTION_ARGS)
 {
     GISTENTRY  *entry = (GISTENTRY *) PG_GETARG_POINTER(0);
     Datum  query = PG_GETARG_DATUM(1);
     StrategyNumber strategy = (StrategyNumber) PG_GETARG_UINT16(2);
-    /* Oid subtype = PG_GETARG_OID(3); */
     bool       *recheck = (bool *) PG_GETARG_POINTER(4);
     temporalKey  *key = (temporalKey*)DatumGetPointer(entry->key);
     bool        retval;
 
-    /*
-     * determine return value as a function of strategy, key and query.
-     *
-     * Use GIST_LEAF(entry) to know where you're called in the index tree,
-     * which comes handy when supporting the = operator for example (you could
-     * check for non empty union() in non-leaf nodes and equality in leaf
-     * nodes).
-     */
     switch(strategy)
     {
-    case TempRangeOverlap:
-    case TempRangeContained:
-    case TempRangeContains:
+    case TempRangeOverlap:       /* 1 */
+    case TempRangeContains:      /* 5 */
+    case TempRangeContained:     /* 9 */
         retval = tsrange_consistent(entry, key, (timeItv*)DatumGetPointer(query), strategy);
         break;
 
-    case TempIdxRangeContained:
-    // case TempIdxRangeContains:
-    // case TempIdxRangeOverlap:
-        idxQuery* query_range = (idxQuery*) DatumGetPointer(query);
-        retval = idx_range_consistent(entry, key, query_range, strategy);
-        break;
-
-    case TempPointContained:
-    case TempPointContains:
-    case TempPointOverlap:
+    case TempPointOverlap:       /* 2 */
+    case TempPointContains:      /* 6 */
+    case TempPointContained:     /* 10 */
+    {
         Timestamp time = DatumGetTimestamp(query);
         retval = ts_consistent(entry, key, &time, strategy);
         break;
+    }
     
-    case TempIdxPointContained:
-    // case TempIdxPointContains:
-    // case TempIdxPointOverlap:
-        idxPointQuery* query_point = (idxPointQuery*) DatumGetPointer(query);
-        retval = idx_point_consistent(entry, key, query_point, strategy);
+    case TempIdxPointOverlap:    /* 3 */
+    case TempIdxPointContains:   /* 7 */
+    case TempIdxPointContained:  /* 11 */
+        retval = idx_point_consistent(entry, key, (idxPointQuery*) DatumGetPointer(query), strategy);
         break;
 
-        
-        
-        
+    case TempIdxRangeOverlap:    /* 4 */
+    case TempIdxRangeContains:   /* 8 */
+    case TempIdxRangeContained:  /* 12 */
+        retval = idx_range_consistent(entry, key, (idxQuery*) DatumGetPointer(query), strategy);
+        break;
 
     default:
         elog(ERROR, "unrecognized strategy number: %d", strategy);
-			retval = false;		/* keep compiler quiet */
-			break;
+        retval = false;
+        break;
     }
 
-    *recheck = true;        /* or false if check is exact */
-
+    *recheck = true;
     PG_RETURN_BOOL(retval);
 }
 
- /**
-  * This function will handle queries where query data is just a timestamp
-  * range. e.g. get all tuples contained in [start, end]
-  */
 static bool 
 tsrange_consistent(GISTENTRY* entry, temporalKey* key, timeItv* query, StrategyNumber strategy)
 {
@@ -189,44 +418,28 @@ tsrange_consistent(GISTENTRY* entry, temporalKey* key, timeItv* query, StrategyN
     {
         switch (strategy)
         {
-            case TempRangeOverlap:
-                return CHECK_TIME_OVERLAP(key, query);
-            case TempRangeContains:
-                return CHECK_TIME_CONTAINS(key, query);
-            case TempRangeContained:
-                return CHECK_TIME_CONTAINED(key, query);
-            default:
-                elog(ERROR, "unrecognized strategy number: %d for tsrange queries", strategy);
-                return false;
+            case TempRangeOverlap: return CHECK_TIME_OVERLAP(key, query);
+            case TempRangeContains: return CHECK_TIME_CONTAINS(key, query);
+            case TempRangeContained: return CHECK_TIME_CONTAINED(key, query);
+            default: return false;
         }
     }
-    // For non-leaf nodes, we just check if the bounding box overlaps with the query range.
     return CHECK_TIME_OVERLAP(key, query);
 }
 
-/**
- * This function will handle queries where query data is a single time point.
- * e.g. get all tuples containing T.
- */
 static bool 
 ts_consistent(GISTENTRY* entry, temporalKey* key, Timestamp* query, StrategyNumber strategy)
 {
     switch (strategy)
     {
-        case TempPointContained:
+        case TempPointOverlap:
+        case TempPointContains:
+        case TempPointContained: 
             return CHECK_TIME_POINT_CONTAINED(key, *query);
-        
-        default:
-            elog(ERROR, "unrecognized strategy number: %d for single time point", strategy);
-            break;
+        default: return false;
     }
-    return false;
 }
 
-/**
- * This function will handle queries where query data an idx and a time point
- * e.g. get all tuples with primary key K containing T.
- */
 static bool 
 idx_point_consistent(GISTENTRY* entry, temporalKey* key, idxPointQuery* query, StrategyNumber strategy)
 {
@@ -234,20 +447,16 @@ idx_point_consistent(GISTENTRY* entry, temporalKey* key, idxPointQuery* query, S
     {
         switch(strategy)
         {
+            case TempIdxPointOverlap:
+            case TempIdxPointContains:
             case TempIdxPointContained:
                 return CHECK_TIME_POINT_CONTAINED(key, query->time) && CHECK_ID_OVERLAP(key, query);
-            default:
-                elog(ERROR, "unrecognized strategy number: %d for idx point queries", strategy);
-                return false;
+            default: return false;
         }
     }
     return CHECK_TIME_POINT_CONTAINED(key, query->time) && CHECK_ID_OVERLAP(key, query);
 }
 
-/**
- * This function will handle queries where query data an idx and a time range
- * e.g. get all tuples with primary key K overlapping [start, end].
- */
 static bool 
 idx_range_consistent(GISTENTRY* entry, temporalKey* key, idxQuery* query, StrategyNumber strategy)
 {
@@ -261,49 +470,11 @@ idx_range_consistent(GISTENTRY* entry, temporalKey* key, idxQuery* query, Strate
             return CHECK_TIME_OVERLAP(key, query) && CHECK_ID_OVERLAP(key, query);
         case TempIdxRangeContains:
             return CHECK_TIME_CONTAINS(key, query) && CHECK_ID_OVERLAP(key, query);
-        default:
-            break;
+        default: break;
         }
     }
     return CHECK_TIME_OVERLAP(key, query) && CHECK_ID_OVERLAP(key, query);
 }
-
-/**
- * This functions check consistent based on query types. Each recieves a 
- * bounding box to check from its caller.
- * Strategy specifies whether it is OVERLAP, CONTAINED, or CONTAINS
- */
-
-// static bool 
-// bbox_consistent(temporalKey* key, temporalKey* query, StrategyNumber strategy)
-// {
-//     if (GIST_LEAF(entry))
-//     {
-//         switch (strategy)
-//         {
-//         case TempRangeOverlap:
-//             return CHECK_TIME_OVERLAP(key, query);
-//         case TempRangeContains:
-//             return CHECK_TIME_CONTAINS(key, query);
-//         case TempRangeContained:
-//             return CHECK_TIME_CONTAINED(key, query);
-//         case TempPointContained:
-//             return CHECK_TIME_POINT_CONTAINED(key, query);
-//         case TempIdxRangeContained:
-//             return CHECK_TIME_CONTAINED(key, query) && CHECK_ID_OVERLAP(key, query);
-//         case TempIdxRangeOverlap:
-//             return CHECK_TIME_OVERLAP(key, query) && CHECK_ID_OVERLAP(key, query);
-//         case TempIdxRangeContains:
-//             return CHECK_TIME_CONTAINS(key, query) && CHECK_ID_OVERLAP(key, query);
-//         case TempIdxPointContained:
-//             return CHECK_TIME_POINT_CONTAINED(key, query) && CHECK_ID_OVERLAP(key, query);
-//         default:
-//             elog(ERROR, "unrecognized strategy number: %d for bbox queries", strategy);
-//             return false;
-//         }
-//     }
-//     return CHECK_TIME_OVERLAP(key, query) && CHECK_ID_OVERLAP(key, query);
-// }
 
 static void 
 entry_union(temporalKey* a, temporalKey* b, temporalKey* dest)
@@ -341,36 +512,24 @@ temporal_union(PG_FUNCTION_ARGS)
 {
     GistEntryVector *entryvec = (GistEntryVector *) PG_GETARG_POINTER(0);
     GISTENTRY  *ent = entryvec->vector;
-    temporalKey     *out,
-                    *tmp;
-    int         numranges,
-                i = 0;
-
+    temporalKey     *out, *tmp;
+    int         numranges, i;
     int *size = (int*) PG_GETARG_POINTER(1);
 
     numranges = entryvec->n;
     tmp = (temporalKey*) DatumGetPointer(ent[0].key);
     out = (temporalKey*) palloc(sizeof(temporalKey));
     memcpy(out, tmp, sizeof(temporalKey));
-    // out = tmp;
 
-    if (numranges == 1)
-    {
-        PG_RETURN_POINTER(out);
-    }
+    if (numranges == 1) PG_RETURN_POINTER(out);
 
     for (i = 1; i < numranges; i++)
     {
         tmp = (temporalKey*) DatumGetPointer(ent[i].key);
-
-    
         entry_union(out, tmp, out);
-
-        // out = my_union_implementation(out, tmp);
     }
 
     *size = sizeof(temporalKey);
-
     PG_RETURN_POINTER(out);
 }
 
@@ -382,10 +541,8 @@ temporal_same(PG_FUNCTION_ARGS)
     bool       *result = (bool *) PG_GETARG_POINTER(2);
 
     if(v1 && v2)
-        *result = (v1->id_lower == v2->id_lower &&
-                   v1->id_upper == v2->id_upper && 
-                   v1->time_lower == v2->time_lower && 
-                   v1->time_upper == v2->time_upper);
+        *result = (v1->id_lower == v2->id_lower && v1->id_upper == v2->id_upper && 
+                   v1->time_lower == v2->time_lower && v1->time_upper == v2->time_upper);
     else 
         *result = (v1 == NULL && v2 == NULL);
     PG_RETURN_POINTER(result);
