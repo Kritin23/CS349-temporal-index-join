@@ -553,60 +553,72 @@ temporal_picksplit(PG_FUNCTION_ARGS)
 {
     GistEntryVector *entryvec = (GistEntryVector *) PG_GETARG_POINTER(0);
     GIST_SPLITVEC *v = (GIST_SPLITVEC *) PG_GETARG_POINTER(1);
-    OffsetNumber maxoff = entryvec->n - 1;
-    int         i, nbytes;
-    OffsetNumber *left, *right;
-    temporalKey *tmp_union, *unionL, *unionR;
-    GISTENTRY **raw_entryvec;
+    OffsetNumber i, j, maxoff = entryvec->n - 1;
+    temporalKey *unionL, *unionR, *cur;
+    OffsetNumber seed_1 = FirstOffsetNumber, seed_2 = OffsetNumberNext(FirstOffsetNumber);
+    int64 max_dist = -1;
 
-    nbytes = (maxoff + 1) * sizeof(OffsetNumber);
+    /* 1. Find the two most distant seeds (Simplified Quadratic Seed Selection) */
+    for (i = FirstOffsetNumber; i < maxoff; i = OffsetNumberNext(i))
+    {
+        temporalKey *ki = (temporalKey *) DatumGetPointer(entryvec->vector[i].key);
+        for (j = OffsetNumberNext(i); j <= maxoff; j = OffsetNumberNext(j))
+        {
+            temporalKey *kj = (temporalKey *) DatumGetPointer(entryvec->vector[j].key);
+            temporalKey merged;
+            entry_union(ki, kj, &merged);
+            int64 dist = temporal_area(&merged) - temporal_area(ki) - temporal_area(kj);
+            if (dist > max_dist)
+            {
+                max_dist = dist;
+                seed_1 = i;
+                seed_2 = j;
+            }
+        }
+    }
 
-    v->spl_left = (OffsetNumber *) palloc(nbytes);
-    left = v->spl_left;
+    /* Initialize split vectors */
+    v->spl_left = (OffsetNumber *) palloc(entryvec->n * sizeof(OffsetNumber));
+    v->spl_right = (OffsetNumber *) palloc(entryvec->n * sizeof(OffsetNumber));
     v->spl_nleft = 0;
-
-    v->spl_right = (OffsetNumber *) palloc(nbytes);
-    right = v->spl_right;
     v->spl_nright = 0;
 
-    unionL = NULL;
-    unionR = NULL;
+    unionL = (temporalKey *) palloc(sizeof(temporalKey));
+    unionR = (temporalKey *) palloc(sizeof(temporalKey));
+    memcpy(unionL, DatumGetPointer(entryvec->vector[seed_1].key), sizeof(temporalKey));
+    memcpy(unionR, DatumGetPointer(entryvec->vector[seed_2].key), sizeof(temporalKey));
 
-    raw_entryvec = (GISTENTRY **) malloc(entryvec->n * sizeof(void *));
-    for (i = FirstOffsetNumber; i <= maxoff; i = OffsetNumberNext(i))
-        raw_entryvec[i] = &(entryvec->vector[i]);
-
+    /* 2. Distribute remaining entries */
     for (i = FirstOffsetNumber; i <= maxoff; i = OffsetNumberNext(i))
     {
-        int real_index = raw_entryvec[i] - entryvec->vector;
-        tmp_union = (temporalKey*) DatumGetPointer(entryvec->vector[real_index].key);
-        Assert(tmp_union != NULL);
+        if (i == seed_1) {
+            v->spl_left[v->spl_nleft++] = i;
+            continue;
+        }
+        if (i == seed_2) {
+            v->spl_right[v->spl_nright++] = i;
+            continue;
+        }
 
-        if (i < maxoff/2)
+        cur = (temporalKey *) DatumGetPointer(entryvec->vector[i].key);
+        
+        temporalKey tmpL, tmpR;
+        entry_union(unionL, cur, &tmpL);
+        entry_union(unionR, cur, &tmpR);
+
+        int64 growthL = temporal_area(&tmpL) - temporal_area(unionL);
+        int64 growthR = temporal_area(&tmpR) - temporal_area(unionR);
+
+        /* Assign to the group that grows the least */
+        if (growthL < growthR)
         {
-            if (unionL == NULL)
-            {
-                unionL = (temporalKey*) palloc(sizeof(temporalKey));
-                memcpy(unionL, tmp_union, sizeof(temporalKey));
-            }
-            else entry_union(unionL, tmp_union, unionL);
-
-            *left = real_index;
-            ++left;
-            ++(v->spl_nleft);
+            entry_union(unionL, cur, unionL);
+            v->spl_left[v->spl_nleft++] = i;
         }
         else
         {
-            if (unionR == NULL)
-            {
-                unionR = (temporalKey*) palloc(sizeof(temporalKey));
-                memcpy(unionR, tmp_union, sizeof(temporalKey));
-            }
-            else entry_union(unionR, tmp_union, unionR);
-
-            *right = real_index;
-            ++right;
-            ++(v->spl_nright);
+            entry_union(unionR, cur, unionR);
+            v->spl_right[v->spl_nright++] = i;
         }
     }
 
