@@ -68,7 +68,7 @@ Next steps:
    This is the interface specified in the SQL standard. Let's go with this as our interface too.
    Reference: https://en.wikipedia.org/wiki/SQL:2011
 
-   1. Time period definitions use two standard table columns as the start and end of a named time period, with closed      set-open set semantics. This provides compatibility with existing data models, application code, and tools
+   1. Time period definitions use two standard table columns as the start and end of a named time period, with closed set-open set semantics. This provides compatibility with existing data models, application code, and tools
 
       CREATE TABLE employee_salary (
          emp_id INT,

@@ -247,6 +247,13 @@ Datum temporal_overlap_idx_range(PG_FUNCTION_ARGS) {
     PG_RETURN_BOOL(key->id == query->id && key->start <= query->end && key->end >= query->start);
 }
 
+PG_FUNCTION_INFO_V1(temporal_overlap_leaf_key);
+Datum temporal_overlap_leaf_key(PG_FUNCTION_ARGS) {
+    leafKey *key = (leafKey *) PG_GETARG_POINTER(0);
+    leafKey *query = (leafKey *) PG_GETARG_POINTER(1);
+    PG_RETURN_BOOL(key->id == query->id && key->start < query->end && key->end > query->start);
+}
+
 /* Contains (@>) */
 PG_FUNCTION_INFO_V1(temporal_contains_time_itv);
 Datum temporal_contains_time_itv(PG_FUNCTION_ARGS) {
@@ -398,6 +405,7 @@ temporal_consistent(PG_FUNCTION_ARGS)
     case TempIdxRangeOverlap:    /* 4 */
     case TempIdxRangeContains:   /* 8 */
     case TempIdxRangeContained:  /* 12 */
+    case TempLeafOverlap:        /* 13 */
         retval = idx_range_consistent(entry, key, (idxQuery*) DatumGetPointer(query), strategy);
         break;
 
@@ -467,6 +475,7 @@ idx_range_consistent(GISTENTRY* entry, temporalKey* key, idxQuery* query, Strate
         case TempIdxRangeContained:
             return CHECK_TIME_CONTAINED(key, query) && CHECK_ID_OVERLAP(key, query);
         case TempIdxRangeOverlap:
+        case TempLeafOverlap:
             return CHECK_TIME_OVERLAP(key, query) && CHECK_ID_OVERLAP(key, query);
         case TempIdxRangeContains:
             return CHECK_TIME_CONTAINS(key, query) && CHECK_ID_OVERLAP(key, query);

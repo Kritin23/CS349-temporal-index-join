@@ -18,6 +18,7 @@
 #define TempPointContained      10
 #define TempIdxPointContained   11
 #define TempIdxRangeContained   12
+#define TempLeafOverlap         13
 
 
 #endif // __TEMPORAL__

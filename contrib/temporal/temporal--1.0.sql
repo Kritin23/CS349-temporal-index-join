@@ -148,6 +148,7 @@ CREATE FUNCTION temporal_overlap_time_itv(leaf_key_type, time_itv_query) RETURNS
 CREATE FUNCTION temporal_overlap_timestamp(leaf_key_type, timestamp) RETURNS boolean AS 'MODULE_PATHNAME', 'temporal_overlap_timestamp' LANGUAGE C IMMUTABLE STRICT;
 CREATE FUNCTION temporal_overlap_idx_point(leaf_key_type, idx_point_query) RETURNS boolean AS 'MODULE_PATHNAME', 'temporal_overlap_idx_point' LANGUAGE C IMMUTABLE STRICT;
 CREATE FUNCTION temporal_overlap_idx_range(leaf_key_type, idx_range_query) RETURNS boolean AS 'MODULE_PATHNAME', 'temporal_overlap_idx_range' LANGUAGE C IMMUTABLE STRICT;
+CREATE FUNCTION temporal_overlap_leaf_key(leaf_key_type, leaf_key_type) RETURNS boolean AS 'MODULE_PATHNAME', 'temporal_overlap_leaf_key' LANGUAGE C IMMUTABLE STRICT;
 
 -- CONTAINS (@>)
 CREATE FUNCTION temporal_contains_time_itv(leaf_key_type, time_itv_query) RETURNS boolean AS 'MODULE_PATHNAME', 'temporal_contains_time_itv' LANGUAGE C IMMUTABLE STRICT;
@@ -195,6 +196,7 @@ CREATE OPERATOR && (LEFTARG = leaf_key_type, RIGHTARG = time_itv_query, PROCEDUR
 CREATE OPERATOR && (LEFTARG = leaf_key_type, RIGHTARG = timestamp, PROCEDURE = temporal_overlap_timestamp);
 CREATE OPERATOR && (LEFTARG = leaf_key_type, RIGHTARG = idx_point_query, PROCEDURE = temporal_overlap_idx_point);
 CREATE OPERATOR && (LEFTARG = leaf_key_type, RIGHTARG = idx_range_query, PROCEDURE = temporal_overlap_idx_range);
+CREATE OPERATOR && (LEFTARG = leaf_key_type, RIGHTARG = leaf_key_type, PROCEDURE = temporal_overlap_leaf_key);
 
 CREATE OPERATOR @> (LEFTARG = leaf_key_type, RIGHTARG = time_itv_query, PROCEDURE = temporal_contains_time_itv);
 CREATE OPERATOR @> (LEFTARG = leaf_key_type, RIGHTARG = timestamp, PROCEDURE = temporal_contains_timestamp);
@@ -205,6 +207,9 @@ CREATE OPERATOR <@ (LEFTARG = leaf_key_type, RIGHTARG = time_itv_query, PROCEDUR
 CREATE OPERATOR <@ (LEFTARG = leaf_key_type, RIGHTARG = timestamp, PROCEDURE = temporal_contained_timestamp);
 CREATE OPERATOR <@ (LEFTARG = leaf_key_type, RIGHTARG = idx_point_query, PROCEDURE = temporal_contained_idx_point);
 CREATE OPERATOR <@ (LEFTARG = leaf_key_type, RIGHTARG = idx_range_query, PROCEDURE = temporal_contained_idx_range);
+
+ALTER OPERATOR && (leaf_key_type, leaf_key_type)
+SET (COMMUTATOR = '&&');
 
 -- ===============================
 -- OPERATOR CLASS
@@ -227,6 +232,8 @@ CREATE OPERATOR CLASS temporal_ops
         OPERATOR 10 <@ (leaf_key_type, timestamp),
         OPERATOR 11 <@ (leaf_key_type, idx_point_query),
         OPERATOR 12 <@ (leaf_key_type, idx_range_query),
+
+        OPERATOR 13 && (leaf_key_type, leaf_key_type),
 
         FUNCTION 1  temporal_consistent (internal, internal, smallint, oid, internal),
         FUNCTION 2  temporal_union (internal, internal),
