@@ -1,10 +1,6 @@
 -- ============================================================
 -- temporal_agg --1.0.sql
 --
--- Recommended usage: keep table columns as normal scalar types and
--- attach an expression GiST index on agg_leaf(id, t_start, t_end, v2).
--- Query through seg_minmax_v2 — no custom column types required.
---
 --     CREATE TABLE events (
 --         id      int,
 --         t_start timestamp,
@@ -12,17 +8,12 @@
 --         v2      bigint
 --     );
 --
---     CREATE INDEX events_idx ON events
---         USING gist (agg_leaf(id, t_start, t_end, v2));
+--     CREATE INDEX <index_name> ON events
+--         USING gist (agg_leaf(id, t_start, t_end, <data_col>));
 --
---     SELECT seg_minmax_v2('events_idx'::regclass,
---                          7, '2024-01-01'::timestamp,
---                             '2024-12-31'::timestamp);
---     -- returns bigint[] of {min(v2), max(v2), sum(v2), count}
---     -- empty result -> {NULL, NULL, NULL, 0}
+--     SELECT seg_aggregate('<index_name>'::regclass, <query_id>, '<query_start_time>'::timestamp,'<query_end_time>'::timestamp);
 -- ============================================================
 
--- ===== Types =====
 
 CREATE TYPE agg_leaf_type;
 
@@ -89,7 +80,7 @@ RETURNS agg_query_type
 AS 'MODULE_PATHNAME', 'agg_query'
 LANGUAGE C IMMUTABLE STRICT;
 
--- ===== Predicate operator (filter use, not required by traversal) =====
+-- ===== Predicate operator  =====
 
 CREATE FUNCTION agg_overlap_query(agg_leaf_type, agg_query_type)
 RETURNS bool
@@ -147,19 +138,15 @@ CREATE OPERATOR CLASS agg_ops
         STORAGE agg_key_type;
 
 -- ===== Custom aggregate-traversal entry point =====
--- Returns bigint[] = {min(v2), max(v2), sum(v2), count} over rows where
--- id = q.id and the row's time interval overlaps [q.start, q.end].
+-- Returns bigint[] = {min(v2), max(v2), sum(v2), count} over matching rows.
 -- For an empty result: {NULL, NULL, NULL, 0} — matches SQL aggregate
--- semantics for an empty set.
 
-CREATE FUNCTION seg_minmax_v2(regclass, agg_query_type)
+CREATE FUNCTION seg_aggregate(regclass, agg_query_type)
 RETURNS bigint[]
-AS 'MODULE_PATHNAME', 'seg_minmax_v2'
+AS 'MODULE_PATHNAME', 'seg_aggregate'
 LANGUAGE C STRICT;
 
--- Convenience wrapper: callers pass plain (id, start, end) — no need to
--- construct an agg_query_type explicitly.
-CREATE FUNCTION seg_minmax_v2(regclass, int, timestamp, timestamp)
+CREATE FUNCTION seg_aggregate(regclass, int, timestamp, timestamp)
 RETURNS bigint[]
-AS $$ SELECT seg_minmax_v2($1, agg_query($2, $3, $4)) $$
+AS $$ SELECT seg_aggregate($1, agg_query($2, $3, $4)) $$
 LANGUAGE SQL STABLE STRICT;

@@ -1,32 +1,14 @@
 /*
  * contrib/temporal_join/temporal_join.c
  *
- * Streaming sort-merge interval join for temporal data.
- *
  *   SELECT * FROM temporal_join('A'::regclass, 'B'::regclass);
  *
- * Both input tables are required to expose three columns
+ * Both input tables are required to have three columns
  *   id        int
  *   timerange tsrange
  *   data      int
  * (the column names matter; types must be exactly these).
  *
- * Algorithm:
- *   1. Pull each table through SPI cursors (row-at-a-time, no full
- *      materialization in memory).
- *   2. Push every row into a Tuplesortstate keyed (id, lower(timerange)).
- *      Tuplesort spills to per-backend temp files when work_mem is exceeded.
- *   3. Stream both sorts in lockstep ("opening" event = next row from
- *      whichever side has the smaller (id, lower)).
- *   4. Maintain two active sets — intervals of each side that have
- *      opened but not yet closed (i.e. upper >= current sweep point and
- *      same id). On each opening, emit pairs against the opposite-side
- *      active set; that's the join output.
- *
- * Memory ceiling: 2 * work_mem (one per tuplesort) + work_mem (output
- * tuplestore) + active-set sizes. Active sets are bounded by the maximum
- * number of intervals overlapping a single point within one id, never by
- * |A| or |B|. Inputs of any size work — sorts spill, output spills.
  *
  * Cost: O((|A|+|B|) log (|A|+|B|) + output) plus disk I/O if spilled.
  */
@@ -52,17 +34,9 @@
 
 PG_MODULE_MAGIC;
 
-/* Operator OIDs for the sort keys.
- * int4 < int4         : pg_operator.oid = 97
- * timestamp < timestamp : pg_operator.oid = 2062
- * (Hardcoded — these are stable since the dawn of time.) */
 #define INT4_LT_OP        97
 #define TIMESTAMP_LT_OP   2062
 
-
-/* ====================================================================== */
-/* Row buffer + active-set helpers                                        */
-/* ====================================================================== */
 
 typedef struct InRow {
     int32     id;
@@ -113,12 +87,8 @@ as_add(ActiveSet *s, const InRow *r)
     s->items[s->n++] = *r;
 }
 
-/* Drop entries whose interval has already closed before (or at) `cutoff`.
- * Half-open semantics ('[)' canonical form): an interval [lo, hi) is OPEN
- * at time t iff lo <= t < hi. So at the sweep point `cutoff`, only
- * entries with hi > cutoff (strict) are still active. Using >= here
- * would treat endpoints as inclusive and emit spurious pairs whenever
- * one interval ends exactly where another starts. */
+/* An interval [lo, hi) is OPEN,at time t iff lo <= t < hi. So at the sweep point `cutoff`, only
+ * entries with hi > cutoff  are still active. */
 static void
 as_prune(ActiveSet *s, Timestamp cutoff)
 {
@@ -129,10 +99,6 @@ as_prune(ActiveSet *s, Timestamp cutoff)
     s->n = w;
 }
 
-
-/* ====================================================================== */
-/* Output emission                                                        */
-/* ====================================================================== */
 
 /* Build a tsrange '[common_lo, common_hi)' for the intersection of two
  * intervals known to overlap. */
@@ -169,10 +135,6 @@ emit_pair(Tuplestorestate *out, TupleDesc desc,
 }
 
 
-/* ====================================================================== */
-/* SPI cursor → Tuplesortstate streaming                                  */
-/* ====================================================================== */
-
 static void
 stream_into_sort(const char *sql,
                  Tuplesortstate *sort,
@@ -203,10 +165,6 @@ stream_into_sort(const char *sql,
 }
 
 
-/* ====================================================================== */
-/* Tuplesort → InRow                                                      */
-/* ====================================================================== */
-
 static bool
 read_row(Tuplesortstate *sort, TupleTableSlot *slot, InRow *out)
 {
@@ -215,8 +173,6 @@ read_row(Tuplesortstate *sort, TupleTableSlot *slot, InRow *out)
         return false;
 
     slot_getallattrs(slot);
-    /* All three attrs are NOT NULL by SQL contract. If the source has
-     * NULLs, sort order is still well-defined; we don't filter here. */
     out->id = DatumGetInt32(slot->tts_values[0]);
     out->lo = DatumGetTimestamp(slot->tts_values[1]);
     out->hi = DatumGetTimestamp(slot->tts_values[2]);
@@ -224,10 +180,6 @@ read_row(Tuplesortstate *sort, TupleTableSlot *slot, InRow *out)
     return true;
 }
 
-
-/* ====================================================================== */
-/* Build the SPI projection SQL for a given relation                      */
-/* ====================================================================== */
 
 static char *
 build_projection_sql(Oid relOid)
@@ -241,8 +193,7 @@ build_projection_sql(Oid relOid)
 
     qual = quote_qualified_identifier(nspname, relname);
 
-    /* Required column names: id, timerange.
-     * lower()/upper() return timestamp; ::int4 cast is defensive. */
+    /* Required column names: id, timerange. */
     return psprintf(
         "SELECT id::int4, "
         "lower(timerange)::timestamp, "
@@ -252,9 +203,6 @@ build_projection_sql(Oid relOid)
 }
 
 
-/* ====================================================================== */
-/* Main SRF                                                                */
-/* ====================================================================== */
 
 PG_FUNCTION_INFO_V1(temporal_join);
 
@@ -289,26 +237,21 @@ temporal_join(PG_FUNCTION_ARGS)
     char *aSql;
     char *bSql;
 
-    /* --- 1. Set up the SRF return tuplestore (uses work_mem; spills) --- */
     InitMaterializedSRF(fcinfo, MAT_SRF_USE_EXPECTED_DESC);
     outDesc  = rsinfo->setDesc;
     outStore = rsinfo->setResult;
 
-    /* --- 2. Input tuple descriptor used by both tuplesorts --- */
     inDesc = CreateTemplateTupleDesc(3);
     TupleDescInitEntry(inDesc, 1, "id", INT4OID,      -1, 0);
     TupleDescInitEntry(inDesc, 2, "lo", TIMESTAMPOID, -1, 0);
     TupleDescInitEntry(inDesc, 3, "hi", TIMESTAMPOID, -1, 0);
     inDesc = BlessTupleDesc(inDesc);
 
-    /* Resolve tsrange's range info once (used per emitted pair). */
     tsrangeTypcache = lookup_type_cache(TSRANGEOID, TYPECACHE_RANGE_INFO);
 
     putslot = MakeSingleTupleTableSlot(inDesc, &TTSOpsHeapTuple);
     getslot = MakeSingleTupleTableSlot(inDesc, &TTSOpsMinimalTuple);
 
-    /* --- 3. Two tuplesorts. Each gets its own work_mem budget; both
-     *        spill to disk if exceeded. --- */
     aSort = tuplesort_begin_heap(inDesc, 2, sortKeys,
                                  sortOps, sortColls, nullsFirst,
                                  work_mem, NULL, 0);
@@ -316,7 +259,6 @@ temporal_join(PG_FUNCTION_ARGS)
                                  sortOps, sortColls, nullsFirst,
                                  work_mem, NULL, 0);
 
-    /* --- 4. Stream both source relations through SPI cursors --- */
     if (SPI_connect() != SPI_OK_CONNECT)
         elog(ERROR, "temporal_join: SPI_connect failed");
 
@@ -328,11 +270,9 @@ temporal_join(PG_FUNCTION_ARGS)
 
     SPI_finish();
 
-    /* --- 5. Sort. This is where any disk spill occurs. --- */
     tuplesort_performsort(aSort);
     tuplesort_performsort(bSort);
 
-    /* --- 6. Streaming sweep --- */
     aValid = read_row(aSort, getslot, &aCur);
     bValid = read_row(bSort, getslot, &bCur);
 
@@ -347,8 +287,6 @@ temporal_join(PG_FUNCTION_ARGS)
 
         CHECK_FOR_INTERRUPTS();
 
-        /* Determine which side opens next. Order: smaller id first;
-         * within the same id, smaller lower first. */
         if (!bValid)            aFirst = true;
         else if (!aValid)       aFirst = false;
         else if (aCur.id < bCur.id) aFirst = true;
@@ -365,13 +303,11 @@ temporal_join(PG_FUNCTION_ARGS)
             as_clear(&activeB);
         }
 
-        /* Drop expired (closed) intervals before emitting. */
         as_prune(&activeA, cur->lo);
         as_prune(&activeB, cur->lo);
 
         if (aFirst)
         {
-            /* The opening A-row overlaps everything still active on B. */
             for (int i = 0; i < activeB.n; i++)
                 emit_pair(outStore, outDesc, tsrangeTypcache,
                           cur, &activeB.items[i]);
@@ -388,7 +324,6 @@ temporal_join(PG_FUNCTION_ARGS)
         }
     }
 
-    /* --- 7. Cleanup --- */
     as_free(&activeA);
     as_free(&activeB);
 
@@ -400,3 +335,4 @@ temporal_join(PG_FUNCTION_ARGS)
 
     return (Datum) 0;
 }
+

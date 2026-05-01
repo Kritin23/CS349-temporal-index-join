@@ -4,10 +4,6 @@
  * Aggregate-augmented GiST index for temporal data. Stores per-subtree
  * min/max of an attribute v2 in internal nodes, and answers min/max(v2)
  * over (id = K AND time IN [L, R]) via a custom page-walking traversal
- * that exploits exact subtree containment (not branch-and-bound on bounds).
- *
- * Independent of contrib/temporal — different type and function names so
- * both extensions can coexist.
  */
 
 #include "postgres.h"
@@ -29,12 +25,9 @@
 
 PG_MODULE_MAGIC;
 
-/* === Strategy numbers === */
 #define AggOverlap   1
 
-/* === On-disk layouts === */
 
-/* User-facing leaf payload (column type). */
 typedef struct AggLeaf {
     int32     id;
     Timestamp start;
@@ -42,7 +35,6 @@ typedef struct AggLeaf {
     int64     v2;
 } AggLeaf;                     /* 32 bytes with double alignment */
 
-/* GiST STORAGE type — one shape for both internal and leaf pages. */
 typedef struct AggKey {
     int32     id_lower;
     int32     id_upper;
@@ -54,17 +46,12 @@ typedef struct AggKey {
     int32     v2_count;
 } AggKey;                      /* 56 bytes (double-aligned, 4-byte tail pad) */
 
-/* Range query (id equality + time interval). */
 typedef struct AggQuery {
     int32     id;
     Timestamp start;
     Timestamp end;
 } AggQuery;                    /* 24 bytes with padding */
 
-
-/* ====================================================================== */
-/* I/O — disable text input to force constructor use                      */
-/* ====================================================================== */
 
 PG_FUNCTION_INFO_V1(agg_leaf_in);
 Datum agg_leaf_in(PG_FUNCTION_ARGS) {
@@ -173,10 +160,6 @@ key_area_idtime(const AggKey *k)
 }
 
 
-/* ====================================================================== */
-/* Operator: && (overlap) for direct sequential-scan use                  */
-/* ====================================================================== */
-
 PG_FUNCTION_INFO_V1(agg_overlap_query);
 Datum agg_overlap_query(PG_FUNCTION_ARGS) {
     AggLeaf  *l = (AggLeaf *)  PG_GETARG_POINTER(0);
@@ -252,7 +235,7 @@ Datum agg_penalty(PG_FUNCTION_ARGS) {
     AggKey  merged;
 
     key_union(&merged, o, n);
-    /* penalty by (id, time) area only — v2 is payload, not geometry */
+    /* penalty by (id, time) area  */
     *out = (float) (key_area_idtime(&merged) - key_area_idtime(o));
     PG_RETURN_POINTER(out);
 }
@@ -277,7 +260,7 @@ PG_FUNCTION_INFO_V1(agg_picksplit);
 Datum agg_picksplit(PG_FUNCTION_ARGS) {
     GistEntryVector *ev = (GistEntryVector *) PG_GETARG_POINTER(0);
     GIST_SPLITVEC   *v  = (GIST_SPLITVEC *)   PG_GETARG_POINTER(1);
-    int n = ev->n - 1;          /* entries occupy offsets [1..n] */
+    int n = ev->n - 1;          
     GISTENTRY **sorted;
     int half;
     AggKey *uL = NULL, *uR = NULL;
@@ -336,18 +319,6 @@ Datum agg_consistent(PG_FUNCTION_ARGS) {
 }
 
 
-/* ====================================================================== */
-/* Custom traversal — bypasses GiST scan, walks pages directly.           */
-/*                                                                        */
-/* For each entry on a page:                                              */
-/*   DISJOINT  → prune                                                    */
-/*   CONTAINED → take subtree's pre-aggregated min/max/sum/count exactly  */
-/*   PARTIAL   → descend (or, at leaf, accept the tuple)                  */
-/*                                                                        */
-/* No bounds-prune: SUM/COUNT are additive, so every non-disjoint subtree */
-/* must contribute. Only DISJOINT entries are skipped.                    */
-/* ====================================================================== */
-
 typedef enum { CLS_DISJOINT, CLS_CONTAINED, CLS_PARTIAL } Classify;
 
 static Classify
@@ -377,8 +348,6 @@ walk(Relation rel, BlockNumber blkno, const AggQuery *q,
     page = BufferGetPage(buf);
     isLeaf = GistPageIsLeaf(page);
     maxoff = PageGetMaxOffsetNumber(page);
-    // elog(NOTICE, "walk: blkno=%u isLeaf=%d entries=%d",
-    //      blkno, isLeaf, maxoff);
 
     if (maxoff > 0)
         visit = (BlockNumber *) palloc(maxoff * sizeof(BlockNumber));
@@ -399,18 +368,8 @@ walk(Relation rel, BlockNumber blkno, const AggQuery *q,
         k = (AggKey *) DatumGetPointer(d);
 
         c = classify(k, q);
-        // elog(NOTICE, "  off=%d id=[%d..%d] t=[%ld..%ld] v2=[%lld..%lld] -> %s",
-        //      off, k->id_lower, k->id_upper,
-        //      (long) k->time_lower, (long) k->time_upper,
-        //      (long long) k->v2_min, (long long) k->v2_max,
-        //      c == CLS_DISJOINT ? "DISJOINT" :
-        //      c == CLS_CONTAINED ? "CONTAINED" : "PARTIAL");
         if (c == CLS_DISJOINT) continue;
 
-        /* No bounds-prune here: SUM/COUNT are additive, so every
-         * non-disjoint subtree must contribute. The DISJOINT/CONTAINED
-         * /PARTIAL split is enough — CONTAINED takes the subtree's
-         * pre-aggregated sum/count exactly; PARTIAL descends. */
 
         if (c == CLS_CONTAINED) {
             if (k->v2_min < *best_min) *best_min = k->v2_min;
@@ -420,13 +379,11 @@ walk(Relation rel, BlockNumber blkno, const AggQuery *q,
             continue;
         }
 
-        /* PARTIAL */
         if (isLeaf) {
-            /* leaf MBR collapses to one tuple; not disjoint => qualifies */
             if (k->v2_min < *best_min) *best_min = k->v2_min;
             if (k->v2_max > *best_max) *best_max = k->v2_max;
-            *sum   += k->v2_sum;     /* leaf: v2_sum == v2 */
-            *count += k->v2_count;   /* leaf: v2_count == 1 */
+            *sum   += k->v2_sum;     
+            *count += k->v2_count;   
         } else {
             visit[n_visit++] = ItemPointerGetBlockNumber(&it->t_tid);
         }
@@ -440,9 +397,9 @@ walk(Relation rel, BlockNumber blkno, const AggQuery *q,
     if (visit) pfree(visit);
 }
 
-PG_FUNCTION_INFO_V1(seg_minmax_v2);
+PG_FUNCTION_INFO_V1(seg_aggregate);
 Datum
-seg_minmax_v2(PG_FUNCTION_ARGS)
+seg_aggregate(PG_FUNCTION_ARGS)
 {
     Oid        index_oid = PG_GETARG_OID(0);
     AggQuery  *q         = (AggQuery *) PG_GETARG_POINTER(1);
@@ -461,10 +418,6 @@ seg_minmax_v2(PG_FUNCTION_ARGS)
     walk(rel, GIST_ROOT_BLKNO, q, &best_min, &best_max, &sum, &count);
     index_close(rel, AccessShareLock);
 
-    /* SQL aggregate-of-empty semantics:
-     *   MIN/MAX/SUM -> NULL when no rows match
-     *   COUNT       -> 0    when no rows match
-     * Drive NULLs from count == 0; sum == 0 is a *valid* nonempty answer. */
     if (count == 0) {
         nulls[0] = nulls[1] = nulls[2] = true;
         vals[0] = vals[1] = vals[2] = (Datum) 0;
@@ -473,7 +426,7 @@ seg_minmax_v2(PG_FUNCTION_ARGS)
         vals[0] = Int64GetDatum(best_min);
         vals[1] = Int64GetDatum(best_max);
         vals[2] = Int64GetDatum(sum);
-        vals[3] = Int64GetDatum((int64) count);   /* widen to match INT8 array */
+        vals[3] = Int64GetDatum((int64) count);  
     }
 
     arr = construct_md_array(vals, nulls, 1, dims, lbs,
