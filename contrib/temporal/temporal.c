@@ -3,7 +3,7 @@
  */
 
 #include "postgres.h"
-#include "fmgr.h"       /* Required for PG_MODULE_MAGIC */
+#include "fmgr.h"      
 #include "temporal.h"
 #include "access/gist.h"
 #include "access/stratnum.h"
@@ -11,7 +11,6 @@
 #include "utils/fmgrprotos.h"
 #include "utils/timestamp.h"
 
-/* Magic block to ensure compatibility with PostgreSQL */
 PG_MODULE_MAGIC;
 
 typedef struct temporalKey {
@@ -44,7 +43,7 @@ typedef struct idxQuery {
 } idxQuery;
 
 
-/* ===== Constructors (clean SQL interface) ===== */
+/* ===== Constructors ===== */
 
 PG_FUNCTION_INFO_V1(temporal_key);
 Datum
@@ -106,7 +105,7 @@ temporal_time_range(PG_FUNCTION_ARGS)
     PG_RETURN_POINTER(q);
 }
 
-/* ===== Input functions (disable text input, enforce constructors) ===== */
+/* ===== Input functions ===== */
 
 PG_FUNCTION_INFO_V1(temporal_in);
 Datum
@@ -115,7 +114,7 @@ temporal_in(PG_FUNCTION_ARGS)
     ereport(ERROR,
         (errmsg("temporal_key_type cannot be constructed from text"),
          errhint("Use temporal_key(...) instead")));
-    PG_RETURN_NULL(); /* unreachable */
+    PG_RETURN_NULL(); 
 }
 
 
@@ -126,7 +125,7 @@ leaf_in(PG_FUNCTION_ARGS)
     ereport(ERROR,
         (errmsg("leaf_key_type cannot be constructed from text"),
          errhint("Use temporal_key(id, start_time, end_time) instead")));
-    PG_RETURN_NULL(); /* unreachable */
+    PG_RETURN_NULL();
 }
 
 
@@ -137,7 +136,7 @@ time_itv_in(PG_FUNCTION_ARGS)
     ereport(ERROR,
         (errmsg("time_itv_query cannot be constructed from text"),
          errhint("Use temporal_time_range(start_time, end_time) instead")));
-    PG_RETURN_NULL(); /* unreachable */
+    PG_RETURN_NULL(); 
 }
 
 
@@ -148,7 +147,7 @@ idx_point_in(PG_FUNCTION_ARGS)
     ereport(ERROR,
         (errmsg("idx_point_query cannot be constructed from text"),
          errhint("Use temporal_point(id, timestamp) instead")));
-    PG_RETURN_NULL(); /* unreachable */
+    PG_RETURN_NULL();
 }
 
 
@@ -159,10 +158,8 @@ idx_range_in(PG_FUNCTION_ARGS)
     ereport(ERROR,
         (errmsg("idx_range_query cannot be constructed from text"),
          errhint("Use temporal_range(id, start_time, end_time) instead")));
-    PG_RETURN_NULL(); /* unreachable */
+    PG_RETURN_NULL(); 
 }
-
-/* ===== I/O functions for custom types ===== */
 
 PG_FUNCTION_INFO_V1(temporal_out);
 Datum
@@ -577,7 +574,6 @@ temporal_picksplit(PG_FUNCTION_ARGS)
         }
     }
 
-    /* Initialize split vectors */
     v->spl_left = (OffsetNumber *) palloc(entryvec->n * sizeof(OffsetNumber));
     v->spl_right = (OffsetNumber *) palloc(entryvec->n * sizeof(OffsetNumber));
     v->spl_nleft = 0;
@@ -588,7 +584,6 @@ temporal_picksplit(PG_FUNCTION_ARGS)
     memcpy(unionL, DatumGetPointer(entryvec->vector[seed_1].key), sizeof(temporalKey));
     memcpy(unionR, DatumGetPointer(entryvec->vector[seed_2].key), sizeof(temporalKey));
 
-    /* 2. Distribute remaining entries */
     for (i = FirstOffsetNumber; i <= maxoff; i = OffsetNumberNext(i))
     {
         if (i == seed_1) {
@@ -609,7 +604,6 @@ temporal_picksplit(PG_FUNCTION_ARGS)
         int64 growthL = temporal_area(&tmpL) - temporal_area(unionL);
         int64 growthR = temporal_area(&tmpR) - temporal_area(unionR);
 
-        /* Assign to the group that grows the least */
         if (growthL < growthR)
         {
             entry_union(unionL, cur, unionL);
