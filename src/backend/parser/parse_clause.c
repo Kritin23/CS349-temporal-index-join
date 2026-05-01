@@ -1176,6 +1176,9 @@ transformFromClauseItem(ParseState *pstate, Node *n,
         {
             char *left_relname;
             char *right_relname;
+			FuncCall * fn;
+			RangeFunction *rf;
+			Node *c1, *c2;
 
             if (IsA(j->larg, RangeVar))
                 left_relname = ((RangeVar *) j->larg)->relname;
@@ -1193,17 +1196,17 @@ transformFromClauseItem(ParseState *pstate, Node *n,
                          errmsg("temporal join requires a base table on the right"),
                          parser_errposition(pstate, exprLocation(j->rarg))));
 
-            FuncCall *fn = makeNode(FuncCall);
+            fn = makeNode(FuncCall);
 			fn->funcname = list_make1(makeString("temporal_join"));
 
-			A_Const *c1 = makeStringConst(pstrdup(left_relname), -1);
-			A_Const *c2 = makeStringConst(pstrdup(right_relname), -1);
+			c1 = makeStringConst(pstrdup(left_relname), -1);
+			c2 = makeStringConst(pstrdup(right_relname), -1);
 
-			fn->args = list_make2((Node *) c1, (Node *) c2);
+			fn->args = list_make2(c1, c2);
 
-            fn->args = list_make2((Node *) c1, (Node *) c2);
+            fn->args = list_make2(c1, c2);
 
-            RangeFunction *rf = makeNode(RangeFunction);
+            rf = makeNode(RangeFunction);
             rf->functions = list_make1(list_make2((Node *) fn, NIL));
             
             rf->alias = j->alias;
