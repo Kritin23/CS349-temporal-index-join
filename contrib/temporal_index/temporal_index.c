@@ -4,7 +4,7 @@
 
 #include "postgres.h"
 #include "fmgr.h"       /* Required for PG_MODULE_MAGIC */
-#include "temporal.h"
+#include "temporal_index.h"
 #include "access/gist.h"
 #include "access/stratnum.h"
 #include "utils/float.h"
@@ -247,7 +247,6 @@ Datum temporal_overlap_idx_range(PG_FUNCTION_ARGS) {
     PG_RETURN_BOOL(key->id == query->id && key->start <= query->end && key->end >= query->start);
 }
 
-<<<<<<< HEAD
 PG_FUNCTION_INFO_V1(temporal_overlap_leaf_key);
 Datum temporal_overlap_leaf_key(PG_FUNCTION_ARGS) {
     leafKey *key = (leafKey *) PG_GETARG_POINTER(0);
@@ -255,8 +254,6 @@ Datum temporal_overlap_leaf_key(PG_FUNCTION_ARGS) {
     PG_RETURN_BOOL(key->id == query->id && key->start < query->end && key->end > query->start);
 }
 
-=======
->>>>>>> main
 /* Contains (@>) */
 PG_FUNCTION_INFO_V1(temporal_contains_time_itv);
 Datum temporal_contains_time_itv(PG_FUNCTION_ARGS) {
@@ -408,16 +405,8 @@ temporal_consistent(PG_FUNCTION_ARGS)
     case TempIdxRangeOverlap:    /* 4 */
     case TempIdxRangeContains:   /* 8 */
     case TempIdxRangeContained:  /* 12 */
-<<<<<<< HEAD
-<<<<<<< HEAD
-<<<<<<< HEAD
     case TempLeafOverlap:        /* 13 */
-=======
->>>>>>> main
-=======
->>>>>>> main
-=======
->>>>>>> main
+
         retval = idx_range_consistent(entry, key, (idxQuery*) DatumGetPointer(query), strategy);
         break;
 
