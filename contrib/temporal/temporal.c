@@ -405,7 +405,10 @@ temporal_consistent(PG_FUNCTION_ARGS)
     case TempIdxRangeOverlap:    /* 4 */
     case TempIdxRangeContains:   /* 8 */
     case TempIdxRangeContained:  /* 12 */
+<<<<<<< HEAD
     case TempLeafOverlap:        /* 13 */
+=======
+>>>>>>> main
         retval = idx_range_consistent(entry, key, (idxQuery*) DatumGetPointer(query), strategy);
         break;
 

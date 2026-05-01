@@ -1,0 +1,5 @@
+# temporal_agg extension
+comment = 'Aggregate-augmented temporal GiST index for min/max(v2) queries'
+default_version = '1.0'
+module_pathname = '$libdir/temporal_agg'
+relocatable = true
