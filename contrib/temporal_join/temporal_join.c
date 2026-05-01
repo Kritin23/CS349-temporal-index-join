@@ -44,9 +44,11 @@
 #include "utils/builtins.h"
 #include "utils/lsyscache.h"
 #include "utils/memutils.h"
+#include "utils/rangetypes.h"
 #include "utils/rel.h"
 #include "utils/timestamp.h"
 #include "utils/tuplesort.h"
+#include "utils/typcache.h"
 
 PG_MODULE_MAGIC;
 
@@ -66,7 +68,6 @@ typedef struct InRow {
     int32     id;
     Timestamp lo;
     Timestamp hi;
-    int32     data;
 } InRow;
 
 typedef struct ActiveSet {
@@ -112,13 +113,18 @@ as_add(ActiveSet *s, const InRow *r)
     s->items[s->n++] = *r;
 }
 
-/* Drop entries whose interval has already closed before `cutoff`. */
+/* Drop entries whose interval has already closed before (or at) `cutoff`.
+ * Half-open semantics ('[)' canonical form): an interval [lo, hi) is OPEN
+ * at time t iff lo <= t < hi. So at the sweep point `cutoff`, only
+ * entries with hi > cutoff (strict) are still active. Using >= here
+ * would treat endpoints as inclusive and emit spurious pairs whenever
+ * one interval ends exactly where another starts. */
 static void
 as_prune(ActiveSet *s, Timestamp cutoff)
 {
     int w = 0;
     for (int i = 0; i < s->n; i++)
-        if (s->items[i].hi >= cutoff)
+        if (s->items[i].hi > cutoff)
             s->items[w++] = s->items[i];
     s->n = w;
 }
@@ -128,20 +134,36 @@ as_prune(ActiveSet *s, Timestamp cutoff)
 /* Output emission                                                        */
 /* ====================================================================== */
 
+/* Build a tsrange '[common_lo, common_hi)' for the intersection of two
+ * intervals known to overlap. */
+static RangeType *
+build_common_range(TypeCacheEntry *typcache, Timestamp lo, Timestamp hi)
+{
+    RangeBound lower, upper;
+    lower.val       = TimestampGetDatum(lo);
+    lower.infinite  = false;
+    lower.inclusive = true;
+    lower.lower     = true;
+    upper.val       = TimestampGetDatum(hi);
+    upper.infinite  = false;
+    upper.inclusive = false;          /* match '[)' canonical form */
+    upper.lower     = false;
+    return make_range(typcache, &lower, &upper, false, NULL);
+}
+
 static void
 emit_pair(Tuplestorestate *out, TupleDesc desc,
+          TypeCacheEntry *typcache,
           const InRow *a, const InRow *b)
 {
-    Datum vals[7];
-    bool  nulls[7] = { false, false, false, false, false, false, false };
+    Datum vals[2];
+    bool  nulls[2] = { false, false };
+
+    Timestamp common_lo = (a->lo > b->lo) ? a->lo : b->lo;
+    Timestamp common_hi = (a->hi < b->hi) ? a->hi : b->hi;
 
     vals[0] = Int32GetDatum(a->id);
-    vals[1] = Int32GetDatum(a->data);
-    vals[2] = Int32GetDatum(b->data);
-    vals[3] = TimestampGetDatum(a->lo);
-    vals[4] = TimestampGetDatum(a->hi);
-    vals[5] = TimestampGetDatum(b->lo);
-    vals[6] = TimestampGetDatum(b->hi);
+    vals[1] = PointerGetDatum(build_common_range(typcache, common_lo, common_hi));
 
     tuplestore_putvalues(out, desc, vals, nulls);
 }
@@ -193,13 +215,11 @@ read_row(Tuplesortstate *sort, TupleTableSlot *slot, InRow *out)
         return false;
 
     slot_getallattrs(slot);
-    /* All four attrs are NOT NULL by SQL contract; we don't bother
-     * checking tts_isnull here. If the source has NULLs, sort order is
-     * still well-defined and we just propagate possibly-zero values. */
-    out->id   = DatumGetInt32(slot->tts_values[0]);
-    out->lo   = DatumGetTimestamp(slot->tts_values[1]);
-    out->hi   = DatumGetTimestamp(slot->tts_values[2]);
-    out->data = DatumGetInt32(slot->tts_values[3]);
+    /* All three attrs are NOT NULL by SQL contract. If the source has
+     * NULLs, sort order is still well-defined; we don't filter here. */
+    out->id = DatumGetInt32(slot->tts_values[0]);
+    out->lo = DatumGetTimestamp(slot->tts_values[1]);
+    out->hi = DatumGetTimestamp(slot->tts_values[2]);
 
     return true;
 }
@@ -221,13 +241,12 @@ build_projection_sql(Oid relOid)
 
     qual = quote_qualified_identifier(nspname, relname);
 
-    /* Required column names: id, timerange, data.
+    /* Required column names: id, timerange.
      * lower()/upper() return timestamp; ::int4 cast is defensive. */
     return psprintf(
         "SELECT id::int4, "
         "lower(timerange)::timestamp, "
-        "upper(timerange)::timestamp, "
-        "data::int4 "
+        "upper(timerange)::timestamp "
         "FROM %s",
         qual);
 }
@@ -261,10 +280,11 @@ temporal_join(PG_FUNCTION_ARGS)
     Oid              sortColls[2]  = { InvalidOid, InvalidOid };
     bool             nullsFirst[2] = { false, false };
 
-    InRow     aCur, bCur;
-    bool      aValid, bValid;
-    int32     curId;
-    ActiveSet activeA, activeB;
+    InRow            aCur, bCur;
+    bool             aValid, bValid;
+    int32            curId;
+    ActiveSet        activeA, activeB;
+    TypeCacheEntry  *tsrangeTypcache;
 
     char *aSql;
     char *bSql;
@@ -275,12 +295,14 @@ temporal_join(PG_FUNCTION_ARGS)
     outStore = rsinfo->setResult;
 
     /* --- 2. Input tuple descriptor used by both tuplesorts --- */
-    inDesc = CreateTemplateTupleDesc(4);
-    TupleDescInitEntry(inDesc, 1, "id",   INT4OID,      -1, 0);
-    TupleDescInitEntry(inDesc, 2, "lo",   TIMESTAMPOID, -1, 0);
-    TupleDescInitEntry(inDesc, 3, "hi",   TIMESTAMPOID, -1, 0);
-    TupleDescInitEntry(inDesc, 4, "data", INT4OID,      -1, 0);
+    inDesc = CreateTemplateTupleDesc(3);
+    TupleDescInitEntry(inDesc, 1, "id", INT4OID,      -1, 0);
+    TupleDescInitEntry(inDesc, 2, "lo", TIMESTAMPOID, -1, 0);
+    TupleDescInitEntry(inDesc, 3, "hi", TIMESTAMPOID, -1, 0);
     inDesc = BlessTupleDesc(inDesc);
+
+    /* Resolve tsrange's range info once (used per emitted pair). */
+    tsrangeTypcache = lookup_type_cache(TSRANGEOID, TYPECACHE_RANGE_INFO);
 
     putslot = MakeSingleTupleTableSlot(inDesc, &TTSOpsHeapTuple);
     getslot = MakeSingleTupleTableSlot(inDesc, &TTSOpsMinimalTuple);
@@ -351,14 +373,16 @@ temporal_join(PG_FUNCTION_ARGS)
         {
             /* The opening A-row overlaps everything still active on B. */
             for (int i = 0; i < activeB.n; i++)
-                emit_pair(outStore, outDesc, cur, &activeB.items[i]);
+                emit_pair(outStore, outDesc, tsrangeTypcache,
+                          cur, &activeB.items[i]);
             as_add(&activeA, cur);
             aValid = read_row(aSort, getslot, &aCur);
         }
         else
         {
             for (int i = 0; i < activeA.n; i++)
-                emit_pair(outStore, outDesc, &activeA.items[i], cur);
+                emit_pair(outStore, outDesc, tsrangeTypcache,
+                          &activeA.items[i], cur);
             as_add(&activeB, cur);
             bValid = read_row(bSort, getslot, &bCur);
         }
