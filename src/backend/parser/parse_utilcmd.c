@@ -912,34 +912,35 @@ transformTableConstraint(CreateStmtContext *cxt, Constraint *constraint)
 			Constraint *gen = makeNode(Constraint);
 			int i = 0;
 
+			if (cxt->isforeign)
+				ereport(ERROR,
+						(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+						 errmsg("Period constraints are not supported on foreign tables"),
+						 parser_errposition(cxt->pstate,
+											constraint->location)));
+
 			coldef->colname = strVal(llast(constraint->keys));
 			coldef->typeName = makeTypeNameFromOid(TSRANGEOID, -1);
 			coldef->is_not_null = false;
 			coldef->location = constraint->location;
 			coldef->generated = ATTRIBUTE_GENERATED_STORED;
 
-			/* 2. Build the Generation Expression: tstzrange(col1, col2) */
 			
 			fn->funcname = list_make1(makeString("tsrange"));
 			fn->args = NIL;
 			
-			/* Assuming constraint->keys contains the list of ColumnNames */
-			
 			foreach(lc, constraint->keys)
 			{	
-				// Node *key = (Node *) lfirst(lc);
 				char *colname = strVal(lfirst(lc));
 				ColumnRef *cref = makeNode(ColumnRef);
 				if (i == 2){
-					break; /* Skip the last column name, which is the period column itself */
+					break; 
 				}
-				/* Wrap column names into proper expressions if they aren't already */
 
 				cref->fields = list_make1(makeString(colname));
 				cref->location = constraint->location;
 
 				fn->args = lappend(fn->args, cref);
-				// fn->args = lappend(fn->args, key);
 				i++;
 			}
 			
@@ -950,22 +951,20 @@ transformTableConstraint(CreateStmtContext *cxt, Constraint *constraint)
 			fn->over = NULL;
 			fn->location = constraint->location;
 
-			/* 3. Create the Generation Constraint */
 			gen->contype = CONSTR_GENERATED;
 			gen->generated_when = ATTRIBUTE_IDENTITY_ALWAYS; 
 			gen->raw_expr = (Node *) fn;
 			gen->location = constraint->location;
 			gen->cooked_expr = NULL;
 
-			/* 4. Attach the constraint to the column and the column to the context */
 			coldef->constraints = list_make1(gen);
 			coldef->raw_default = (Node *) fn;
 			cxt->columns = lappend(cxt->columns, coldef);
 			
-			ereport(NOTICE,
-					errmsg("period column \"%s\" will be generated as tsrange(%s, %s)",
-							coldef->colname, strVal(linitial(constraint->keys)), strVal(lsecond(constraint->keys)))
-						);
+			// ereport(NOTICE,
+			// 		errmsg("period column \"%s\" will be generated as tsrange(%s, %s)",
+			// 				coldef->colname, strVal(linitial(constraint->keys)), strVal(lsecond(constraint->keys)))
+			// 			);
 			break;
 		}
 
@@ -982,16 +981,18 @@ transformTableConstraint(CreateStmtContext *cxt, Constraint *constraint)
             FuncCall *fn;
             IndexElem *elem;
 
-            /* 
-             * 2. ALL EXECUTABLE CODE HAPPENS BELOW
-             */
+			if (cxt->isforeign)
+				ereport(ERROR,
+						(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+						 errmsg("Temporal primary key constraints are not supported on foreign tables"),
+						 parser_errposition(cxt->pstate,
+											constraint->location)));
+
             n = makeNode(Constraint);
 
-            /* Safely extract your column names */
             pk_col_name = strVal(linitial(constraint->keys));
             range_col_name = strVal(llast(constraint->keys));
 
-            /* Build the constraint base */
             n->contype = CONSTR_EXCLUSION;
             n->location = constraint->location;
             n->access_method = "gist";
@@ -1003,40 +1004,33 @@ transformTableConstraint(CreateStmtContext *cxt, Constraint *constraint)
             n->deferrable = constraint->deferrable;
             n->initdeferred = constraint->initdeferred;
 
-            /* Construct ColumnRef for the lower bound */
             cref_lower = makeNode(ColumnRef);
             cref_lower->fields = list_make1(makeString(range_col_name));
             cref_lower->location = constraint->location;
 
-            /* Construct ColumnRef for the upper bound */
             cref_upper = makeNode(ColumnRef);
             cref_upper->fields = list_make1(makeString(range_col_name));
             cref_upper->location = constraint->location;
 
-            /* Construct ColumnRef for the primary key */
             cref_pk = makeNode(ColumnRef);
             cref_pk->fields = list_make1(makeString(pk_col_name));
             cref_pk->location = constraint->location;
 
-            /* Build the AST node for: lower(my_range) */
             lower_fn = makeNode(FuncCall);
             lower_fn->funcname = list_make1(makeString("lower"));
             lower_fn->args = list_make1((Node *) cref_lower);
             lower_fn->location = constraint->location;
 
-            /* Build the AST node for: upper(my_range) */
             upper_fn = makeNode(FuncCall);
             upper_fn->funcname = list_make1(makeString("upper"));
             upper_fn->args = list_make1((Node *) cref_upper);
             upper_fn->location = constraint->location;
 
-            /* Build the main AST node for: temporal_key(pk, lower, upper) */
             fn = makeNode(FuncCall);
             fn->funcname = list_make1(makeString("temporal_key"));
             fn->args = list_make3((Node *) cref_pk, (Node *) lower_fn, (Node *) upper_fn);
             fn->location = constraint->location;
 
-            /* Build exclusion element */
             elem = makeNode(IndexElem);
             elem->name = NULL;
             elem->expr = (Node *) fn;
@@ -1046,10 +1040,8 @@ transformTableConstraint(CreateStmtContext *cxt, Constraint *constraint)
             elem->ordering = SORTBY_DEFAULT;
             elem->nulls_ordering = SORTBY_NULLS_DEFAULT;
 
-            /* Assign constraint */
             n->exclusions = list_make1(list_make2(elem, list_make1(makeString("&&"))));
 
-            /* Remember to append 'n' to your table's constraint list here! */
 			cxt->ixconstraints = lappend(cxt->ixconstraints, n);
             break;
 		}
