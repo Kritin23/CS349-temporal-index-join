@@ -211,6 +211,16 @@ CREATE OPERATOR <@ (LEFTARG = leaf_key_type, RIGHTARG = idx_range_query, PROCEDU
 ALTER OPERATOR && (leaf_key_type, leaf_key_type)
 SET (COMMUTATOR = '&&');
 
+CREATE OPERATOR @> (LEFTARG = leaf_key_type, RIGHTARG = time_itv_query, PROCEDURE = temporal_contains_time_itv);
+CREATE OPERATOR @> (LEFTARG = leaf_key_type, RIGHTARG = timestamp, PROCEDURE = temporal_contains_timestamp);
+CREATE OPERATOR @> (LEFTARG = leaf_key_type, RIGHTARG = idx_point_query, PROCEDURE = temporal_contains_idx_point);
+CREATE OPERATOR @> (LEFTARG = leaf_key_type, RIGHTARG = idx_range_query, PROCEDURE = temporal_contains_idx_range);
+
+CREATE OPERATOR <@ (LEFTARG = leaf_key_type, RIGHTARG = time_itv_query, PROCEDURE = temporal_contained_time_itv);
+CREATE OPERATOR <@ (LEFTARG = leaf_key_type, RIGHTARG = timestamp, PROCEDURE = temporal_contained_timestamp);
+CREATE OPERATOR <@ (LEFTARG = leaf_key_type, RIGHTARG = idx_point_query, PROCEDURE = temporal_contained_idx_point);
+CREATE OPERATOR <@ (LEFTARG = leaf_key_type, RIGHTARG = idx_range_query, PROCEDURE = temporal_contained_idx_range);
+
 -- ===============================
 -- OPERATOR CLASS
 -- ===============================

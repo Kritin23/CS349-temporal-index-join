@@ -1,0 +1,5 @@
+# temporal_join extension
+comment = 'Streaming sort-merge interval join for (id, tsrange) temporal data'
+default_version = '1.0'
+module_pathname = '$libdir/temporal_join'
+relocatable = true
