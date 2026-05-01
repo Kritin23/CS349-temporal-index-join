@@ -905,7 +905,7 @@ static Node *makeRecursiveViewSelect(char *relname, List *aliases, Node *query);
  * They wouldn't be given a precedence at all, were it not that we need
  * left-associativity among the JOIN rules themselves.
  */
-%left		JOIN CROSS LEFT FULL RIGHT INNER_P NATURAL
+%left		JOIN CROSS LEFT FULL RIGHT INNER_P NATURAL TEMPORAL
 
 %%
 
@@ -13688,6 +13688,25 @@ joined_table:
 					n->usingClause = NIL; /* figure out which columns later... */
 					n->join_using_alias = NULL;
 					n->quals = NULL; /* fill later */
+					$$ = n;
+				}
+			| table_ref TEMPORAL JOIN table_ref
+				{
+					JoinExpr *n = makeNode(JoinExpr);
+					n->jointype = JOIN_INNER;  /* placeholder */
+					n->isNatural = false;
+					n->larg = $1;
+					n->rarg = $4;
+					n->usingClause = NIL;
+					n->quals = NULL;
+					n->alias = NULL;
+
+					/* Mark this as temporal join */
+					n->jointype = JOIN_INNER;  /* keep normal for now */
+
+					/* Custom flag (you must extend struct!) */
+					n->isTemporal = true;
+
 					$$ = n;
 				}
 		;

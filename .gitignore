@@ -49,3 +49,4 @@ data/
 .vscode/
 logfile
 .gdbinitdata/
+gmake.out

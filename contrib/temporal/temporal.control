@@ -1,5 +1,0 @@
-# temporal extension
-comment = 'temporal index support using GiST'
-default_version = '1.0'
-module_pathname = '$libdir/temporal'
-relocatable = true

@@ -1172,6 +1172,59 @@ transformFromClauseItem(ParseState *pstate, Node *n,
 		int			sv_namespace_length;
 		int			k;
 
+		if (j->isTemporal)
+        {
+            char *left_relname;
+            char *right_relname;
+
+            /* * Check if the left and right arguments are base tables (RangeVar).
+             * We cannot pass a subquery or a transient join result as a string 
+             * to your backend C function.
+             */
+            if (IsA(j->larg, RangeVar))
+                left_relname = ((RangeVar *) j->larg)->relname;
+            else
+                ereport(ERROR,
+                        (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+                         errmsg("temporal join function requires a base table on the left"),
+                         parser_errposition(pstate, exprLocation(j->larg))));
+
+            if (IsA(j->rarg, RangeVar))
+                right_relname = ((RangeVar *) j->rarg)->relname;
+            else
+                ereport(ERROR,
+                        (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+                         errmsg("temporal join function requires a base table on the right"),
+                         parser_errposition(pstate, exprLocation(j->rarg))));
+
+            /* Build the function call AST: temporal_join('left', 'right') */
+			FuncCall *fn = makeNode(FuncCall);
+			fn->funcname = list_make1(makeString("temporal_join"));
+
+			/* Use the built-in helper to completely avoid the union/struct errors */
+			A_Const *c1 = makeStringConst(pstrdup(left_relname), -1);
+			A_Const *c2 = makeStringConst(pstrdup(right_relname), -1);
+
+			fn->args = list_make2((Node *) c1, (Node *) c2);
+
+            fn->args = list_make2((Node *) c1, (Node *) c2);
+
+            /* Wrap it in a RangeFunction */
+            RangeFunction *rf = makeNode(RangeFunction);
+            rf->functions = list_make1(list_make2((Node *) fn, NIL));
+            
+            /* Crucial: Preserve any user-provided alias (e.g., ... TEMPORAL JOIN B AS t) */
+            rf->alias = j->alias;
+            rf->lateral = false;
+            rf->ordinality = false;
+            rf->is_rowsfrom = false;
+
+            /* * Recursively call transformFromClauseItem on our new RangeFunction.
+             * Postgres will now handle resolving the function, namespaces, and variables!
+             */
+            return transformFromClauseItem(pstate, (Node *) rf, top_nsitem, namespace);
+        }
+
 		/*
 		 * Recursively process the left subtree, then the right.  We must do
 		 * it in this order for correct visibility of LATERAL references.

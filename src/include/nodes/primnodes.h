@@ -2279,6 +2279,7 @@ typedef struct JoinExpr
 	NodeTag		type;
 	JoinType	jointype;		/* type of join */
 	bool		isNatural;		/* Natural join? Will need to shape table */
+	bool 		isTemporal;
 	Node	   *larg;			/* left subtree */
 	Node	   *rarg;			/* right subtree */
 	/* USING clause, if any (list of String) */
