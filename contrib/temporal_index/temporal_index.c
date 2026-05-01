@@ -1,5 +1,5 @@
 /*
- * contrib/temporal/temporal.c 
+ * contrib/temporal/temporal_index.c 
  */
 
 #include "postgres.h"
@@ -11,7 +11,6 @@
 #include "utils/fmgrprotos.h"
 #include "utils/timestamp.h"
 
-/* Magic block to ensure compatibility with PostgreSQL */
 PG_MODULE_MAGIC;
 
 typedef struct temporalKey {
@@ -44,7 +43,7 @@ typedef struct idxQuery {
 } idxQuery;
 
 
-/* ===== Constructors (clean SQL interface) ===== */
+/* ===== Constructors ===== */
 
 PG_FUNCTION_INFO_V1(temporal_key);
 Datum
@@ -106,7 +105,7 @@ temporal_time_range(PG_FUNCTION_ARGS)
     PG_RETURN_POINTER(q);
 }
 
-/* ===== Input functions (disable text input, enforce constructors) ===== */
+/* ===== Input functions ===== */
 
 PG_FUNCTION_INFO_V1(temporal_in);
 Datum
@@ -162,7 +161,6 @@ idx_range_in(PG_FUNCTION_ARGS)
     PG_RETURN_NULL(); /* unreachable */
 }
 
-/* ===== I/O functions for custom types ===== */
 
 PG_FUNCTION_INFO_V1(temporal_out);
 Datum
@@ -568,7 +566,7 @@ temporal_picksplit(PG_FUNCTION_ARGS)
     OffsetNumber seed_1 = FirstOffsetNumber, seed_2 = OffsetNumberNext(FirstOffsetNumber);
     int64 max_dist = -1;
 
-    /* 1. Find the two most distant seeds (Simplified Quadratic Seed Selection) */
+    /* Find the two most distant seeds (Simplified Quadratic Seed Selection) */
     for (i = FirstOffsetNumber; i < maxoff; i = OffsetNumberNext(i))
     {
         temporalKey *ki = (temporalKey *) DatumGetPointer(entryvec->vector[i].key);
@@ -576,8 +574,9 @@ temporal_picksplit(PG_FUNCTION_ARGS)
         {
             temporalKey *kj = (temporalKey *) DatumGetPointer(entryvec->vector[j].key);
             temporalKey merged;
+            int64 dist;
             entry_union(ki, kj, &merged);
-            int64 dist = temporal_area(&merged) - temporal_area(ki) - temporal_area(kj);
+            dist = temporal_area(&merged) - temporal_area(ki) - temporal_area(kj);
             if (dist > max_dist)
             {
                 max_dist = dist;
@@ -598,9 +597,12 @@ temporal_picksplit(PG_FUNCTION_ARGS)
     memcpy(unionL, DatumGetPointer(entryvec->vector[seed_1].key), sizeof(temporalKey));
     memcpy(unionR, DatumGetPointer(entryvec->vector[seed_2].key), sizeof(temporalKey));
 
-    /* 2. Distribute remaining entries */
+    /* Distribute remaining entries */
     for (i = FirstOffsetNumber; i <= maxoff; i = OffsetNumberNext(i))
     {
+        temporalKey tmpL, tmpR;
+        int64 growthL, growthR;
+
         if (i == seed_1) {
             v->spl_left[v->spl_nleft++] = i;
             continue;
@@ -612,12 +614,11 @@ temporal_picksplit(PG_FUNCTION_ARGS)
 
         cur = (temporalKey *) DatumGetPointer(entryvec->vector[i].key);
         
-        temporalKey tmpL, tmpR;
         entry_union(unionL, cur, &tmpL);
         entry_union(unionR, cur, &tmpR);
 
-        int64 growthL = temporal_area(&tmpL) - temporal_area(unionL);
-        int64 growthR = temporal_area(&tmpR) - temporal_area(unionR);
+        growthL = temporal_area(&tmpL) - temporal_area(unionL);
+        growthR = temporal_area(&tmpR) - temporal_area(unionR);
 
         /* Assign to the group that grows the least */
         if (growthL < growthR)

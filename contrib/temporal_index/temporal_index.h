@@ -1,5 +1,5 @@
 /*
- * contrib/temopral/temporal.h
+ * contrib/temopral/temporal_index.h
  */
 
 
