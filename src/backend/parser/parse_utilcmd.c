@@ -904,6 +904,148 @@ transformTableConstraint(CreateStmtContext *cxt, Constraint *constraint)
 {
 	switch (constraint->contype)
 	{
+		case CONSTR_TEMPORAL:
+		{
+			ColumnDef *coldef = makeNode(ColumnDef);
+			ListCell *lc;
+			FuncCall *fn = makeNode(FuncCall);
+			Constraint *gen = makeNode(Constraint);
+			int i = 0;
+
+			if (cxt->isforeign)
+				ereport(ERROR,
+						(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+						 errmsg("Period constraints are not supported on foreign tables"),
+						 parser_errposition(cxt->pstate,
+											constraint->location)));
+
+			coldef->colname = strVal(llast(constraint->keys));
+			coldef->typeName = makeTypeNameFromOid(TSRANGEOID, -1);
+			coldef->is_not_null = false;
+			coldef->location = constraint->location;
+			coldef->generated = ATTRIBUTE_GENERATED_STORED;
+
+			
+			fn->funcname = list_make1(makeString("tsrange"));
+			fn->args = NIL;
+			
+			foreach(lc, constraint->keys)
+			{	
+				char *colname = strVal(lfirst(lc));
+				ColumnRef *cref = makeNode(ColumnRef);
+				if (i == 2){
+					break; 
+				}
+
+				cref->fields = list_make1(makeString(colname));
+				cref->location = constraint->location;
+
+				fn->args = lappend(fn->args, cref);
+				i++;
+			}
+			
+			fn->agg_within_group = false;
+			fn->agg_star = false;
+			fn->agg_distinct = false;
+			fn->func_variadic = false;
+			fn->over = NULL;
+			fn->location = constraint->location;
+
+			gen->contype = CONSTR_GENERATED;
+			gen->generated_when = ATTRIBUTE_IDENTITY_ALWAYS; 
+			gen->raw_expr = (Node *) fn;
+			gen->location = constraint->location;
+			gen->cooked_expr = NULL;
+
+			coldef->constraints = list_make1(gen);
+			coldef->raw_default = (Node *) fn;
+			cxt->columns = lappend(cxt->columns, coldef);
+			
+			// ereport(NOTICE,
+			// 		errmsg("period column \"%s\" will be generated as tsrange(%s, %s)",
+			// 				coldef->colname, strVal(linitial(constraint->keys)), strVal(lsecond(constraint->keys)))
+			// 			);
+			break;
+		}
+
+		case CONSTR_TEMPORAL_PRIMARY:
+		{
+			Constraint *n;
+            char *pk_col_name;
+            char *range_col_name;
+            ColumnRef *cref_lower;
+            ColumnRef *cref_upper;
+            ColumnRef *cref_pk;
+            FuncCall *lower_fn;
+            FuncCall *upper_fn;
+            FuncCall *fn;
+            IndexElem *elem;
+
+			if (cxt->isforeign)
+				ereport(ERROR,
+						(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+						 errmsg("Temporal primary key constraints are not supported on foreign tables"),
+						 parser_errposition(cxt->pstate,
+											constraint->location)));
+
+            n = makeNode(Constraint);
+
+            pk_col_name = strVal(linitial(constraint->keys));
+            range_col_name = strVal(llast(constraint->keys));
+
+            n->contype = CONSTR_EXCLUSION;
+            n->location = constraint->location;
+            n->access_method = "gist";
+            n->including = NIL;
+            n->options = NIL;
+            n->indexname = NULL;
+            n->indexspace = NULL;
+            n->where_clause = NULL;
+            n->deferrable = constraint->deferrable;
+            n->initdeferred = constraint->initdeferred;
+
+            cref_lower = makeNode(ColumnRef);
+            cref_lower->fields = list_make1(makeString(range_col_name));
+            cref_lower->location = constraint->location;
+
+            cref_upper = makeNode(ColumnRef);
+            cref_upper->fields = list_make1(makeString(range_col_name));
+            cref_upper->location = constraint->location;
+
+            cref_pk = makeNode(ColumnRef);
+            cref_pk->fields = list_make1(makeString(pk_col_name));
+            cref_pk->location = constraint->location;
+
+            lower_fn = makeNode(FuncCall);
+            lower_fn->funcname = list_make1(makeString("lower"));
+            lower_fn->args = list_make1((Node *) cref_lower);
+            lower_fn->location = constraint->location;
+
+            upper_fn = makeNode(FuncCall);
+            upper_fn->funcname = list_make1(makeString("upper"));
+            upper_fn->args = list_make1((Node *) cref_upper);
+            upper_fn->location = constraint->location;
+
+            fn = makeNode(FuncCall);
+            fn->funcname = list_make1(makeString("temporal_key"));
+            fn->args = list_make3((Node *) cref_pk, (Node *) lower_fn, (Node *) upper_fn);
+            fn->location = constraint->location;
+
+            elem = makeNode(IndexElem);
+            elem->name = NULL;
+            elem->expr = (Node *) fn;
+            elem->indexcolname = NULL;
+            elem->collation = NIL;
+            elem->opclass = NIL;
+            elem->ordering = SORTBY_DEFAULT;
+            elem->nulls_ordering = SORTBY_NULLS_DEFAULT;
+
+            n->exclusions = list_make1(list_make2(elem, list_make1(makeString("&&"))));
+
+			cxt->ixconstraints = lappend(cxt->ixconstraints, n);
+            break;
+		}
+
 		case CONSTR_PRIMARY:
 			if (cxt->isforeign)
 				ereport(ERROR,

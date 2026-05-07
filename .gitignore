@@ -49,3 +49,7 @@ data/
 .vscode/
 logfile
 .gdbinitdata/
+<<<<<<< HEAD
+=======
+gmake.out
+>>>>>>> kaushal

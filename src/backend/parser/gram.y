@@ -304,7 +304,7 @@ static Node *makeRecursiveViewSelect(char *relname, List *aliases, Node *query);
 		DropdbStmt DropTableSpaceStmt
 		DropTransformStmt
 		DropUserMappingStmt ExplainStmt FetchStmt
-		GrantStmt GrantRoleStmt ImportForeignSchemaStmt IndexStmt InsertStmt
+		GrantStmt GrantRoleStmt ImportForeignSchemaStmt IndexStmt InsertStmt IntroStmt
 		ListenStmt LoadStmt LockStmt MergeStmt NotifyStmt ExplainableStmt PreparableStmt
 		CreateFunctionStmt AlterFunctionStmt ReindexStmt RemoveAggrStmt
 		RemoveFuncStmt RemoveOperStmt RenameStmt ReturnStmt RevokeStmt RevokeRoleStmt
@@ -431,7 +431,7 @@ static Node *makeRecursiveViewSelect(char *relname, List *aliases, Node *query);
 				func_as createfunc_opt_list opt_createfunc_opt_list alterfunc_opt_list
 				old_aggr_definition old_aggr_list
 				oper_argtypes RuleActionList RuleActionMulti
-				opt_column_list columnList opt_name_list
+				opt_column_list columnList opt_name_list temporalColumnList temporalPKList
 				sort_clause opt_sort_clause sortby_list index_params
 				stats_params
 				opt_include opt_c_include index_including_params
@@ -742,7 +742,7 @@ static Node *makeRecursiveViewSelect(char *relname, List *aliases, Node *query);
 	JOIN JSON JSON_ARRAY JSON_ARRAYAGG JSON_EXISTS JSON_OBJECT JSON_OBJECTAGG
 	JSON_QUERY JSON_SCALAR JSON_SERIALIZE JSON_TABLE JSON_VALUE
 
-	KEEP KEY KEYS
+	KAYVEE KEEP KEY KEYS
 
 	LABEL LANGUAGE LARGE_P LAST_P LATERAL_P
 	LEADING LEAKPROOF LEAST LEFT LEVEL LIKE LIMIT LISTEN LOAD LOCAL
@@ -760,8 +760,8 @@ static Node *makeRecursiveViewSelect(char *relname, List *aliases, Node *query);
 	ORDER ORDINALITY OTHERS OUT_P OUTER_P
 	OVER OVERLAPS OVERLAY OVERRIDING OWNED OWNER
 
-	PARALLEL PARAMETER PARSER PARTIAL PARTITION PASSING PASSWORD PATH
-	PLACING PLAN PLANS POLICY
+	PARALLEL PARAMETER PARSER PARTIAL PARTITION PASSING PASSWORD PATH 
+	PERIOD PLACING PLAN PLANS POLICY
 	POSITION PRECEDING PRECISION PRESERVE PREPARE PREPARED PRIMARY
 	PRIOR PRIVILEGES PROCEDURAL PROCEDURE PROCEDURES PROGRAM PUBLICATION
 
@@ -779,7 +779,7 @@ static Node *makeRecursiveViewSelect(char *relname, List *aliases, Node *query);
 	START STATEMENT STATISTICS STDIN STDOUT STORAGE STORED STRICT_P STRING_P STRIP_P
 	SUBSCRIPTION SUBSTRING SUPPORT SYMMETRIC SYSID SYSTEM_P SYSTEM_USER
 
-	TABLE TABLES TABLESAMPLE TABLESPACE TARGET TEMP TEMPLATE TEMPORARY TEXT_P THEN
+	TABLE TABLES TABLESAMPLE TABLESPACE TARGET TEMP TEMPLATE TEMPORAL TEMPORARY TEXT_P THEN
 	TIES TIME TIMESTAMP TO TRAILING TRANSACTION TRANSFORM
 	TREAT TRIGGER TRIM TRUE_P
 	TRUNCATE TRUSTED TYPE_P TYPES_P
@@ -905,7 +905,7 @@ static Node *makeRecursiveViewSelect(char *relname, List *aliases, Node *query);
  * They wouldn't be given a precedence at all, were it not that we need
  * left-associativity among the JOIN rules themselves.
  */
-%left		JOIN CROSS LEFT FULL RIGHT INNER_P NATURAL
+%left		JOIN CROSS LEFT FULL RIGHT INNER_P NATURAL TEMPORAL
 
 %%
 
@@ -1095,6 +1095,7 @@ stmt:
 			| ImportForeignSchemaStmt
 			| IndexStmt
 			| InsertStmt
+			| IntroStmt
 			| ListenStmt
 			| RefreshMatViewStmt
 			| LoadStmt
@@ -1148,6 +1149,14 @@ opt_drop_behavior:
 			CASCADE							{ $$ = DROP_CASCADE; }
 			| RESTRICT						{ $$ = DROP_RESTRICT; }
 			| /* EMPTY */					{ $$ = DROP_RESTRICT; /* default */ }
+		;
+
+/*
+	Introduction Statement
+*/
+
+IntroStmt:
+		KAYVEE {ereport(NOTICE, (errmsg("Hi kayvee, we are thrilled to have you here. Please continue with your queries."))); $$ = NULL;}
 		;
 
 /*****************************************************************************
@@ -4232,7 +4241,6 @@ ConstraintElem:
 				opt_column_list key_match key_actions ConstraintAttributeSpec
 				{
 					Constraint *n = makeNode(Constraint);
-
 					n->contype = CONSTR_FOREIGN;
 					n->location = @1;
 					n->pktable = $7;
@@ -4249,8 +4257,50 @@ ConstraintElem:
 					n->initially_valid = !n->skip_validation;
 					$$ = (Node *) n;
 				}
+			| PERIOD FOR name '(' temporalColumnList ')' 
+				{
+					Constraint *n = makeNode(Constraint);
+
+					n->contype = CONSTR_TEMPORAL;
+					n->location = @1;
+					n->keys = $5;
+					n->keys = lappend(n->keys, makeString($3));
+					n->including = NIL;
+					n->options = NIL;
+					n->indexname = NULL;
+					n->indexspace = NULL;
+					$$ = (Node *) n;
+				}
+			| TEMPORAL PRIMARY KEY '(' temporalPKList ')' ConstraintAttributeSpec 
+				{
+					Constraint *n = makeNode(Constraint);
+
+					n->contype = CONSTR_TEMPORAL_PRIMARY;
+					n->location = @1;
+					n->keys = $5;
+					n->including = NIL;
+					n->options = NIL;
+					n->indexname = NULL;
+					n->indexspace = NULL;
+					$$ = (Node *) n;
+				}
 		;
 
+temporalColumnList:
+			ColId ',' ColId
+				{
+					$$ = list_make1((Node *) makeString($1));
+					$$ = lappend($$, makeString($3));
+				}
+		;
+
+temporalPKList:
+			ColId ',' ColId
+				{
+					$$ = list_make1((Node *) makeString($1));
+					$$ = lappend($$, makeString($3));
+				}
+		;
 /*
  * DomainConstraint is separate from TableConstraint because the syntax for
  * NOT NULL constraints is different.  For table constraints, we need to
@@ -13640,6 +13690,25 @@ joined_table:
 					n->quals = NULL; /* fill later */
 					$$ = n;
 				}
+			| table_ref TEMPORAL JOIN table_ref
+				{
+					JoinExpr *n = makeNode(JoinExpr);
+					n->jointype = JOIN_INNER;  /* placeholder */
+					n->isNatural = false;
+					n->larg = $1;
+					n->rarg = $4;
+					n->usingClause = NIL;
+					n->quals = NULL;
+					n->alias = NULL;
+
+					/* Mark this as temporal join */
+					n->jointype = JOIN_INNER;  /* keep normal for now */
+
+					/* Custom flag (you must extend struct!) */
+					n->isTemporal = true;
+
+					$$ = n;
+				}
 		;
 
 alias_clause:
@@ -18017,6 +18086,7 @@ reserved_keyword:
 			| INITIALLY
 			| INTERSECT
 			| INTO
+			| KAYVEE
 			| LATERAL_P
 			| LEADING
 			| LIMIT
@@ -18029,6 +18099,7 @@ reserved_keyword:
 			| ONLY
 			| OR
 			| ORDER
+			| PERIOD
 			| PLACING
 			| PRIMARY
 			| REFERENCES
@@ -18039,6 +18110,7 @@ reserved_keyword:
 			| SYMMETRIC
 			| SYSTEM_USER
 			| TABLE
+			| TEMPORAL
 			| THEN
 			| TO
 			| TRAILING
@@ -18265,6 +18337,7 @@ bare_label_keyword:
 			| JSON_SERIALIZE
 			| JSON_TABLE
 			| JSON_VALUE
+			| KAYVEE
 			| KEEP
 			| KEY
 			| KEYS
@@ -18350,6 +18423,7 @@ bare_label_keyword:
 			| PASSING
 			| PASSWORD
 			| PATH
+			| PERIOD
 			| PLACING
 			| PLAN
 			| PLANS
@@ -18454,6 +18528,7 @@ bare_label_keyword:
 			| TARGET
 			| TEMP
 			| TEMPLATE
+			| TEMPORAL
 			| TEMPORARY
 			| TEXT_P
 			| THEN

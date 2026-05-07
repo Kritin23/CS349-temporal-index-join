@@ -1172,6 +1172,51 @@ transformFromClauseItem(ParseState *pstate, Node *n,
 		int			sv_namespace_length;
 		int			k;
 
+		if (j->isTemporal)
+        {
+            char *left_relname;
+            char *right_relname;
+			FuncCall * fn;
+			RangeFunction *rf;
+			Node *c1, *c2;
+
+            if (IsA(j->larg, RangeVar))
+                left_relname = ((RangeVar *) j->larg)->relname;
+            else
+                ereport(ERROR,
+                        (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+                         errmsg("temporal join requires a base table on the left"),
+                         parser_errposition(pstate, exprLocation(j->larg))));
+
+            if (IsA(j->rarg, RangeVar))
+                right_relname = ((RangeVar *) j->rarg)->relname;
+            else
+                ereport(ERROR,
+                        (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+                         errmsg("temporal join requires a base table on the right"),
+                         parser_errposition(pstate, exprLocation(j->rarg))));
+
+            fn = makeNode(FuncCall);
+			fn->funcname = list_make1(makeString("temporal_join"));
+
+			c1 = makeStringConst(pstrdup(left_relname), -1);
+			c2 = makeStringConst(pstrdup(right_relname), -1);
+
+			fn->args = list_make2(c1, c2);
+
+            fn->args = list_make2(c1, c2);
+
+            rf = makeNode(RangeFunction);
+            rf->functions = list_make1(list_make2((Node *) fn, NIL));
+            
+            rf->alias = j->alias;
+            rf->lateral = false;
+            rf->ordinality = false;
+            rf->is_rowsfrom = false;
+
+            return transformFromClauseItem(pstate, (Node *) rf, top_nsitem, namespace);
+        }
+
 		/*
 		 * Recursively process the left subtree, then the right.  We must do
 		 * it in this order for correct visibility of LATERAL references.
